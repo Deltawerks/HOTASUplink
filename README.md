@@ -67,7 +67,7 @@ To propose a new controller setup, include the exact model names, photos from se
 
 ## License
 
-HOTAS Uplink is source-available. The PolyForm Noncommercial License 1.0.0 covers the code and finished controller models supplied by DeltaWerks. You can inspect the source, build the app, and share your own improvements for noncommercial purposes. For commercial distribution or resale, contact DeltaWerks for a separate license. Third-party components retain their own licenses. [Project license](LICENSE) · [Third-party notices](ASSET-NOTICES.md)
+HOTAS Uplink is source-available under the PolyForm Strict License 1.0.0. You can inspect the code before installing, build an unmodified copy yourself, and use the app for personal, noncommercial flying. Modifying or redistributing DeltaWerks’ code, app or finished controller models requires separate permission from DeltaWerks, even if you give your copy away for free. To share HOTAS Uplink with a friend, send them the official download link. [Download HOTAS Uplink](https://github.com/Deltawerks/HOTASUplink/releases/latest) · [Full project license](LICENSE)
 
-Required Notice: Copyright 2026 DeltaWerks.
+Copyright 2026 DeltaWerks. Third-party components have their own licenses. [Third-party notices](ASSET-NOTICES.md)
 

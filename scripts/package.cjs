@@ -103,6 +103,7 @@ async function populate(destination, publicBuild) {
   await copyFile(path.join(runtime, 'LICENSE'), path.join(destination, 'LICENSE-Electron.txt'));
   const content = path.join(destination, 'resources', 'app');
   await copyFile(path.join(root, 'package.json'), path.join(content, 'package.json'));
+  await copyFile(path.join(root, 'LICENSE'), path.join(content, 'LICENSE'));
   for (const folder of ['desktop', 'game', 'input', 'rig', 'ui']) {
     const dir = path.join('src', folder);
     for (const file of await fs.readdir(path.join(root, dir), { withFileTypes: true })) {

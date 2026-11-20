@@ -1,8 +1,8 @@
 {
   "name": "deltawerks-hotas-uplink",
   "productName": "HOTAS Uplink",
-  "version": "0.4.0",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "version": "0.4.1",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "3D flight control configuration and Star Citizen bindings for Windows",
   "repository": {
     "type": "git",
