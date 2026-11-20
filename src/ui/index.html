@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-p2wJOWN8rB9YvERkPNjvIDxkJTxs+fOHzf3zG8iFAQc='; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob:; worker-src 'self' blob:; object-src 'none'">
+  <title>HOTAS Uplink · Controls</title>
+  <link rel="stylesheet" href="../../assets/brand/tokens.css">
+  <link rel="stylesheet" href="./viewer.css">
+  <link rel="stylesheet" href="./monitor.css">
+  <link rel="stylesheet" href="./editor.css">
+  <script type="importmap">{"imports":{"three":"../../node_modules/three/build/three.module.js","three/addons/":"../../node_modules/three/examples/jsm/"}}</script>
+  <script type="module" src="./viewer.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <i class="glyph" aria-hidden="true"></i>
+      <div class="wordmark">
+        <div class="wordmark-tool">HOTAS <span>Uplink</span></div>
+        <div class="wordmark-maker">Delta<span>Werks</span></div>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Workspace">
+      <button data-page="rig" class="active" aria-current="page" aria-label="Controls" title="Controls"><i data-icon="rig"></i><span>Controls</span></button>
+      <button data-page="sheet" aria-label="Binding sheet" title="Binding sheet"><i data-icon="list"></i><span>Binding sheet</span></button>
+      <button data-page="monitor" aria-label="Input monitor" title="Input monitor"><i data-icon="pulse"></i><span>Input monitor</span></button>
+    </nav>
+    <div class="profile-tools">
+      <button id="source" class="profile-button" aria-labelledby="source-label profile-name" aria-describedby="game-context" aria-haspopup="dialog" title="Choose layout">
+        <i data-icon="layers"></i>
+        <span class="profile-caption"><span class="sr-only" id="source-label">Layout source</span><small id="game-context">STAR CITIZEN <span>/</span> LIVE</small><strong id="profile-name">Loading active profile</strong></span>
+        <i data-icon="chevron"></i>
+      </button>
+      <button id="refresh" class="square" title="Reload profile from disk" aria-label="Reload profile from disk"><i data-icon="reload"></i></button>
+    </div>
+    <span class="connection"><b class="light" id="device-light"></b><span id="device-count">Checking devices</span><span id="device-short" aria-hidden="true"></span></span>
+  </header>
+
+  <main>
+    <h1 class="sr-only" id="page-title">Controls</h1>
+
+    <section id="rig-page" class="workbench">
+      <div class="viewer-column">
+        <div class="frame">
+          <div class="frame-tools"><div class="panel-label rig-heading"><i data-icon="cube"></i><span id="rig-heading">Desk view</span></div>
+            <button id="button-labels" type="button" aria-pressed="true" aria-controls="rig-canvas" title="Toggle short binding names on the controllers"><span class="label-switch" aria-hidden="true"></span>Quick view</button>
+            <button id="edit-layout" type="button" class="edit-toggle" aria-controls="layout-editor" aria-pressed="false" disabled>Edit layout</button>
+            <button id="reference-layout" type="button" aria-pressed="false" title="Read-only reference sheet">Reference sheet</button>
+            <label class="context-choice"><span class="sr-only">Prioritize binding labels</span><select id="label-context" title="Which actions appear first on the diagram"><option value="flying">Flying first</option><option value="all">All contexts</option></select></label>
+            <div id="camera-focus" class="focus-tabs" role="group" aria-label="Focus camera"></div>
+          </div>
+          <div class="stage"><div id="rig-canvas" aria-label="Interactive 3D flight controls"></div>
+            <div id="scene-status" role="status">Loading controller models…</div>
+            <span id="button-labels-empty" class="orbit-hint" role="status" hidden>No bindings on the controls in this view.</span>
+            <div class="camera-tools"><button id="home" class="square small-square" aria-label="Reset camera" title="Reset camera"><i data-icon="home"></i></button></div>
+            <span class="orbit-hint"><i data-icon="orbit"></i> Drag to orbit <b>·</b> Scroll to zoom at cursor</span>
+          </div>
+          <div class="rig-bar">
+            <label class="controller-choice" for="controller-setup"><span id="controller-setup-label">Controller setup</span><select id="controller-setup" aria-labelledby="controller-setup-label"></select></label>
+            <div id="module-controls"><span>SEM module</span><div id="placement" class="segmented" role="group" aria-label="SEM module placement"><button data-place="off">Off</button><button data-place="left">Outside left</button><button data-place="right">Outside right</button></div></div>
+          </div>
+        </div>
+        <section class="inspector">
+          <div class="sub-head"><div class="panel-label"><i data-icon="cross"></i>Control inspector</div><div class="inspect-tools"><span id="inspect-code" class="mono"></span><button id="locate" class="text-button" disabled>Locate on controller</button></div></div>
+          <div id="control-detail"></div>
+        </section>
+      </div>
+      <aside class="directory" id="bindings-panel">
+        <section id="game-handoff" aria-label="Use this layout in Star Citizen" hidden>
+          <button type="button" id="handoff-toggle" aria-expanded="false" aria-controls="handoff-body"><i data-icon="layers"></i><span><strong id="handoff-name"></strong><small id="handoff-caption">Load in Star Citizen</small></span><i data-icon="chevron"></i></button>
+          <div id="next-launch-actions">
+            <div class="next-launch-options">
+              <button type="button" class="next-launch-button" id="apply-next-launch" disabled>Apply for next launch</button>
+              <button type="button" class="text-button" id="recheck-next-launch" hidden>Check again</button>
+              <button type="button" class="text-button" id="undo-next-launch" hidden>Restore previous bindings…</button>
+            </div>
+            <p id="next-launch-availability" role="status"></p>
+          </div>
+          <div id="handoff-body" hidden>
+            <ol><li>In Star Citizen, open <b>Options → Keybindings</b> and select <b>Joystick / HOTAS</b>.</li><li>Open <b>Advanced Controls Customization → Control Profiles</b>, choose <strong id="handoff-preset"></strong>, and confirm the joystick assignments.</li></ol>
+            <button type="button" id="verify-layout">Check active bindings</button>
+            <p id="verification-status" role="status"></p>
+          </div>
+        </section>
+        <div class="sub-head"><div class="panel-label"><i data-icon="list"></i>Bindings</div><span id="binding-total" class="count"></span></div>
+        <div id="directory-tools"></div>
+        <div id="directory-list" class="directory-list"></div>
+      </aside>
+      <aside id="layout-editor" aria-label="Layout editor" hidden></aside>
+    </section>
+    <section id="sheet-page" hidden><div id="sheet-tools"></div><div class="sheet-grid" id="sheet-grid"></div></section>
+    <section id="monitor-page" hidden>
+      <div id="device-cards" class="device-cards"></div>
+      <section class="monitor-card"><div class="sub-head"><div class="panel-label"><i data-icon="pulse"></i>Input activity</div><button id="clear-events" class="text-button">Clear activity</button></div>
+      <div id="monitor-status" class="muted"></div><div id="activity"></div></section>
+    </section>
+    <div id="notice" hidden><span id="notice-message" role="status"></span> <button type="button" id="notice-folder" class="text-button" hidden>Choose LIVE folder…</button></div>
+  </main>
+  <footer><span><i data-icon="eye"></i><span id="mode-status">Viewing layout</span></span><span id="source-status">Reading local configuration</span><button id="hardware" aria-haspopup="dialog"><i data-icon="settings"></i>Settings</button><button id="diagnostics">Profile details <i data-icon="arrow"></i></button></footer>
+  <dialog id="picker" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><button class="square small-square" id="close-dialog" aria-label="Close"><i data-icon="close"></i></button></div><div id="dialog-content"></div></dialog>
+  <dialog id="next-launch-dialog" aria-labelledby="next-launch-title" aria-describedby="next-launch-summary next-launch-detail">
+    <div class="dialog-head"><h2 id="next-launch-title"></h2></div>
+    <div class="next-launch-content">
+      <p id="next-launch-summary"></p>
+      <label id="backup-choice" hidden>Backup to restore
+        <select id="backup-version"></select>
+      </label>
+      <p class="dialog-note" id="next-launch-detail"></p>
+      <p class="dialog-note" id="next-launch-install"></p>
+      <p id="next-launch-result" role="status"></p>
+      <div class="next-launch-options">
+        <button type="button" class="text-button" id="next-launch-dismiss">Cancel</button>
+        <button type="button" class="next-launch-button" id="next-launch-confirm"></button>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>

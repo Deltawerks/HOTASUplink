@@ -1,0 +1,38 @@
+/* DeltaWerks interface colors, typography and motion. */
+:root {
+  /* text */
+  --txt: #eaf1fb;
+  --muted: #c4d5ec;
+  --dim: #7dd3fc;
+
+  /* brand accents */
+  --blue: #3378f6;
+  --blue-2: #60a5fa;
+  --cyan: #22d3ee;
+  --cyan-2: #67e8f9;
+
+  /* gold accent for selection and hardware callouts */
+  --gold: #ffd23f;
+  --gold-glow: rgba(255, 210, 63, 0.5);
+
+  /* lines & surfaces */
+  --line: rgba(51, 120, 246, 0.85);
+  --line-soft: rgba(51, 120, 246, 0.35);
+  --surface-hi: rgba(13, 21, 38, 0.9);
+  --surface-lo: rgba(7, 12, 24, 0.94);
+  --bg-top: #050b17;
+  --bg-bottom: #02050c;
+
+  /* status */
+  --good: #34d399;
+  --warn: #fbbf24;
+  --crit: #f87171;
+  --purple: #a78bfa;
+
+  /* type */
+  --hud: 'Orbitron', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Roboto', 'Segoe UI', system-ui, sans-serif;
+
+  /* motion */
+  --ease: 0.15s ease;
+}

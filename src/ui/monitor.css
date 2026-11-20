@@ -1,0 +1,38 @@
+#monitor-page .device-card { min-width: 0; }
+#monitor-page .monitor-empty { grid-column: 1 / -1; color: var(--muted); }
+.monitor-device-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.monitor-device-title h3 { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.monitor-device-state { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: var(--type-meta)/1.35 var(--body); }
+.monitor-device-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.monitor-device-state.live::before { background: var(--good); }
+.monitor-counts { margin: 4px 0 2px; }
+.monitor-device-details { margin-top: 9px; }
+.monitor-device-details summary { cursor: pointer; width: fit-content; color: var(--muted); font-size: var(--type-label); }
+.monitor-device-details p { overflow-wrap: anywhere; }
+.monitor-device-details p:first-of-type { margin-top: 6px; }
+.monitor-mismatch { margin-top: 7px; color: var(--gold); font: var(--type-label)/1.45 var(--body); }
+.monitor-dial { margin-bottom: 14px; }
+.monitor-dial > summary { padding: 13px 16px; color: var(--txt); cursor: pointer; font-weight: 550; }
+.monitor-dial > summary::marker, .monitor-device-details summary::marker { color: var(--dim); }
+.monitor-dial-body { padding: 0 16px 15px; }
+.monitor-dial-instructions, .monitor-dial-result { color: var(--muted); font-size: var(--type-body); line-height: 1.5; }
+.monitor-host-label { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 13px 0; color: var(--muted); font-size: var(--type-label); }
+.monitor-host-select { max-width: 100%; padding: 5px 9px; background: var(--bg); border: 1px solid var(--edge); border-radius: 3px; font: var(--type-body)/1.35 var(--body); }
+.monitor-dial-slots { display: grid; grid-template-columns: repeat(4,minmax(80px,140px)); gap: 7px; }
+.monitor-slot { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; background: var(--bg); border: 1px solid var(--edge); border-radius: 4px; padding: 8px 10px; font: 550 var(--type-body)/1.35 var(--body); }
+.monitor-slot[aria-pressed="true"] { border-color: var(--blue-2); background: #102336; }
+.monitor-slot small { font: var(--type-meta)/1.35 var(--body); color: var(--muted); }
+.monitor-dial-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.monitor-arm { padding: 6px 10px; color: var(--cyan); background: #112736; border: 1px solid #305269; border-radius: 4px; font-size: var(--type-label); }
+.monitor-dial-result:not(:empty) { margin-top: 9px; }
+#monitor-status[data-level="error"], #monitor-status[data-level="warning"] { color: var(--gold); }
+#activity .event { grid-template-columns: 12ch minmax(0, 1fr) minmax(9ch, .45fr) minmax(8ch, .35fr); font-variant-numeric: tabular-nums; }
+#activity .event > span { overflow-wrap: anywhere; }
+#activity .monitor-press strong { color: var(--cyan); }
+.monitor-dial summary:focus-visible, .monitor-device-details summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+@media (max-width: 700px) {
+  #device-cards { grid-template-columns: minmax(0,1fr); }
+  #activity .event { grid-template-columns: minmax(0,1fr) auto auto; }
+  #activity .event time { grid-column: 1 / -1; color: var(--dim); }
+  .monitor-dial-slots { grid-template-columns: repeat(2,minmax(80px,1fr)); }
+}

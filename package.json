@@ -1,0 +1,25 @@
+{
+  "name": "deltawerks-hotas-uplink",
+  "productName": "HOTAS Uplink",
+  "version": "0.4.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "description": "3D flight control configuration and Star Citizen bindings for Windows",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Deltawerks/HOTASUplink.git"
+  },
+  "private": true,
+  "main": "src/desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test src/game/*.test.cjs src/ui/*.test.mjs test/input/reader.test.cjs",
+    "build": "node scripts/package.cjs"
+  },
+  "dependencies": {
+    "three": "0.183.2"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "resedit": "3.1.1"
+  }
+}
