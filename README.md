@@ -2,7 +2,9 @@
 
 Configure your flight controls in 3D and apply your bindings to Star Citizen. HOTAS Uplink reads your active game profile, shows each assignment on the physical control, and lets you save, apply and restore layouts.
 
-Under **Assets** on the latest Windows release, choose the file ending in `-win32-x64.zip`. Check that release's notes for the controller setups it supports. [Download for Windows x64](https://github.com/Deltawerks/HOTASUplink/releases/latest)
+**[Download the Windows app (.zip) · v0.5.2](https://github.com/Deltawerks/HOTASUplink/releases/download/v0.5.2/HOTAS-Uplink-0.5.2-win32-x64.zip)**
+
+Extract the ZIP and open **HOTAS Uplink.exe**. GitHub’s green **Code → Download ZIP** gives you the source code if you want to inspect or build it yourself.
 
 This guide covers the **VKB Gladiator EVO right stick and left Omni-Throttle** with optional **GNX SEM**, and the **VIRPIL VPC Constellation ALPHA Prime pair** on MT-50CM3 bases with optional **R1-FALCON pedals**. The Windows ZIP for this build includes all six finished models and a HOTAS Uplink starter layout for each stick pair. The screenshot shows the VKB setup with example bindings.
 
