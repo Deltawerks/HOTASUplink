@@ -87,7 +87,7 @@ function disposeObject(object) {
   for (const image of images) image.close();
 }
 
-export function createRig(container, { profile = defaultRig, initialPlacement = 'off', scanDevices = Object.keys(profile.devices), onSelect = () => {}, onEdit = onSelect, onReady = () => {}, onError = () => {}, onContextLost = () => {} } = {}) {
+export function createRig(container, { profile = defaultRig, initialPlacement = 'off', initialPedals = false, scanDevices = Object.keys(profile.devices), onSelect = () => {}, onEdit = onSelect, onReady = () => {}, onError = () => {}, onContextLost = () => {} } = {}) {
   const { devices, controlsByDevice, anchors, surfaceNormals, markerFacing } = profile;
   attachStyles();
   const surface = document.createElement('div');
@@ -99,7 +99,7 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
   } catch (error) {
     queueMicrotask(() => onError(error));
     const noop = () => {};
-    return { setVisible: noop, setPlacement: noop, setLabels: noop, setControls: noop, refreshTextLayout: noop, focus: noop, focusControl: noop, highlight: noop, home: noop, dispose: () => surface.remove() };
+    return { setVisible: noop, setPlacement: noop, setPedals: noop, setLabels: noop, setControls: noop, refreshTextLayout: noop, focus: noop, focusControl: noop, highlight: noop, home: noop, dispose: () => surface.remove() };
   }
   renderer.setClearColor(0, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -149,6 +149,7 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const fades = new Map();
   let placement = null, scope = 'all', active = null, popup = null;
+  let pedalsEnabled = Boolean(initialPedals && devices.pedals);
   let deskPositions = {};
   let referenceMode = false, compactMode = false;
   let frame = 0, disposed = false, animation = null, pressed = null;
@@ -274,7 +275,7 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
   function showChoices(marker, x, y) {
     closeChoices();
     const { device, group } = marker.userData;
-    if (compactMode && compact.openGroup(device, group)) return;
+    if (compactMode && compact.openGroup(device, group, x, y)) return;
     const entries = selectable.get(device + '/' + group) || [];
     if (!entries.length) return;
     if (entries.length === 1) {
@@ -461,7 +462,7 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
       }
     }
     const target = box.getCenter(new THREE.Vector3());
-    const view = scope === 'sem' ? new THREE.Vector3(.16,.97,1).normalize() : normalView;
+    const view = (scope === 'sem' || scope === 'pedals') ? new THREE.Vector3(.16,.97,1).normalize() : normalView;
     const across = new THREE.Vector3().crossVectors(camera.up, view).normalize();
     const up = new THREE.Vector3().crossVectors(view, across);
     const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
@@ -497,13 +498,26 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
   function setPlacement(next) {
     if (placement === next || !['off', 'left', 'right'].includes(next)) return;
     placement = next;
-    deskPositions = profile.deskPositions(next);
+    positionDevices();
+    if (devices.sem) syncAccessory('sem').catch(onError);
+  }
+
+  function setPedals(enabled) {
+    if (!devices.pedals || pedalsEnabled === enabled) return;
+    pedalsEnabled = enabled;
+    positionDevices();
+    syncAccessory('pedals').catch(onError);
+  }
+
+  function positionDevices() {
+    deskPositions = profile.deskPositions(placement, pedalsEnabled);
     for (const [device, [x, z]] of Object.entries(deskPositions)) {
       units[device].position.x = x;
       units[device].position.z = z;
     }
+    closeChoices();
     if (compactMode) compact.resetLayout();
-    if (active?.userData.device === 'sem' && next === 'off') highlight(null, null);
+    if (active && !mounted(active.userData.device)) highlight(null, null);
     frameScope(scope, false);
   }
 
@@ -639,16 +653,15 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
   }
   const resize = new ResizeObserver(resizeSurface);
   resize.observe(surface);
-  setControls(Object.values(controlsByDevice).flat().filter(control => !control.optionalPosition));
-  setPlacement(initialPlacement);
   const loader = new GLTFLoader();
-  Promise.all(Object.entries(devices).map(async ([device, spec]) => {
-    let scan;
-    if (scanDevices.includes(device)) {
-      try { scan = (await loader.loadAsync(spec.model)).scene; }
-      catch (error) { console.warn('Could not load optional ' + device + ' scan.', error); }
-    }
-    if (disposed) { if (scan) disposeObject(scan); return; }
+  const accessories = new Map();
+  async function readScan(device) {
+    if (!scanDevices.includes(device)) return null;
+    try { return (await loader.loadAsync(devices[device].model)).scene; }
+    catch (error) { console.warn('Could not load optional ' + device + ' scan.', error); return null; }
+  }
+  function installModel(device, scan) {
+    const spec = devices[device];
     const model = scan || profile.createFallback(device);
     if (scan && spec.rotationY) model.rotation.y = spec.rotationY;
     model.traverse(child => {
@@ -681,14 +694,81 @@ export function createRig(container, { profile = defaultRig, initialPlacement = 
     units[device].add(model);
     if (autoFrame === device && scope === device) frameScope(device);
     invalidate();
-  })).then(() => {
+    return model;
+  }
+  async function loadHand(device) {
+    const scan = await readScan(device);
+    if (disposed) { if (scan) disposeObject(scan); return; }
+    installModel(device, scan);
+  }
+  async function loadHands() {
+    const mirror = devices.left?.mirrorOf;
+    if (!mirror || !scanDevices.includes('left') || !scanDevices.includes(mirror)) {
+      return Promise.all(Object.keys(devices).filter(device => device !== 'sem' && device !== 'pedals').map(loadHand));
+    }
+    const scan = await readScan(mirror);
+    if (disposed) { if (scan) disposeObject(scan); return; }
+    if (!scan) {
+      installModel(mirror, null);
+      return loadHand('left');
+    }
+    // The ALPHA left scan is a reflection of the right, including its UVs.
+    // Share geometry and textures; hand fades need independent materials.
+    const reflected = scan.clone();
+    reflected.traverse(child => {
+      if (child.isMesh) child.material = Array.isArray(child.material)
+        ? child.material.map(material => material.clone()) : child.material.clone();
+    });
+    reflected.scale.x *= -1;
+    reflected.position.x = devices.left.mirrorOffsetX;
+    const left = new THREE.Group();
+    left.add(reflected);
+    installModel('left', left);
+    installModel(mirror, scan);
+  }
+  function syncAccessory(device) {
+    const entry = accessories.get(device);
+    if (!mounted(device)) {
+      if (entry?.model) {
+        entry.model.removeFromParent();
+        for (let i = meshes.length - 1; i >= 0; i--) {
+          if (meshes[i].userData.unit !== device) continue;
+          masks.delete(meshes[i]);
+          meshes.splice(i, 1);
+        }
+        labelGeometry.clear();
+        fades.get(device).materials.clear();
+        disposeObject(entry.model);
+        accessories.delete(device);
+      }
+      return Promise.resolve();
+    }
+    if (entry) return entry.ready;
+    const pending = {};
+    accessories.set(device, pending);
+    pending.ready = readScan(device).then(scan => {
+      if (disposed || !mounted(device)) {
+        if (scan) disposeObject(scan);
+        accessories.delete(device);
+      } else pending.model = installModel(device, scan);
+    });
+    return pending.ready;
+  }
+  setControls(Object.values(controlsByDevice).flat().filter(control => !control.optionalPosition));
+  placement = initialPlacement;
+  positionDevices();
+  const initialLoads = [loadHands()];
+  for (const device of ['sem', 'pedals']) {
+    if (devices[device] && mounted(device)) initialLoads.push(syncAccessory(device));
+  }
+  Promise.all(initialLoads).then(() => {
     modelsReady = true;
     invalidate();
     if (!disposed && !contextLost) onReady();
   }).catch(error => { if (!disposed) onError(error); });
 
   return {
-    setPlacement, setControls, highlight, focusControl, refreshTextLayout,
+    setPlacement, setPedals, setControls, highlight, focusControl, refreshTextLayout,
     setVisible(visible) { pageVisible = visible; syncVisibility(); },
     setLabels(items = []) {
       const source = items || [];

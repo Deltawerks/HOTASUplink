@@ -112,6 +112,7 @@ button i {
   -webkit-app-region: drag;
 }
 .topbar button,
+.topbar .controller-choice,
 .topbar nav {
   -webkit-app-region: no-drag;
 }
@@ -414,6 +415,7 @@ h2 {
 .label-switch::after { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 #button-labels[aria-pressed="true"] .label-switch { justify-content: flex-end; color: var(--cyan-2); }
 .stage #button-labels-empty { top: 9px; bottom: auto; }
+#use-automatic { pointer-events: auto; }
 #label-context { background: var(--panel); color: var(--muted); }
 .workbench.reference-mode { grid-template-columns: minmax(0, 1fr); }
 .reference-mode .viewer-column { grid-template-rows: minmax(0, 1fr); }
@@ -523,7 +525,7 @@ h2 {
   padding-top: 6px;
   padding-bottom: 6px;
 }
-.controller-choice, #module-controls {
+#module-controls, #pedal-controls {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -532,15 +534,31 @@ h2 {
   font-size: var(--type-label);
 }
 .controller-choice {
-  flex: 1 1 auto;
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  background: var(--panel);
+  color: var(--dim);
+  font: 600 var(--type-meta)/1.15 var(--body);
 }
-#module-controls[hidden] {
+#module-controls[hidden], #pedal-controls[hidden], .rig-bar:not(:has(> :not([hidden]))) {
   display: none;
 }
 #controller-setup {
+  width: clamp(132px, 12vw, 210px);
   max-width: 100%;
+  border: 0;
+  padding: 0;
   background: var(--panel);
+  font-weight: 600;
+  text-overflow: ellipsis;
 }
+.welcome-body { padding: 15px 19px 19px; }
+#welcome-choices { display: grid; gap: 6px; margin-top: 14px; }
+#welcome-choices button { padding: 14px; }
+#welcome-choices i { color: var(--blue-2); }
 .sub-head {
   min-height: 45px;
   border-bottom: 1px solid var(--soft-edge);
@@ -806,6 +824,7 @@ h2 {
 }
 footer {
   position: fixed;
+  container-type: inline-size;
   bottom: 0;
   left: 0;
   right: 0;
@@ -838,6 +857,13 @@ footer button {
   color: var(--dim);
 }
 #hardware { margin-left: auto; }
+.community-credit {
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+@container (max-width: 52em) {
+  .community-credit { display: none; }
+}
 #source-status {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1105,7 +1131,7 @@ dialog .dialog-head {
   #device-count { position: absolute; width: 1px; clip-path: inset(50%); overflow: hidden; }
   #device-short { display: inline; }
 }
-@container app-header (max-width: 44em) {
+@container app-header (max-width: 68em) {
   .tabs button i[data-icon] { display: inline-flex; }
   .tabs button span { display: none; }
 }

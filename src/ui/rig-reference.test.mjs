@@ -7,7 +7,7 @@ import { Vector3 } from 'three';
 import { anchors } from '../rig/anchors.js';
 import { createSchematic } from '../rig/schematic.js';
 import { defaultRig, rigForId, rigProfiles } from '../rig/profiles.mjs';
-import { modelAssetsByRig } from '../rig/model-assets.mjs';
+import { modelAssetsByRig, virpilAlphaId } from '../rig/model-assets.mjs';
 
 test('the setup picker resolves old preferences and every registered control has a model anchor', () => {
   assert.equal(rigForId(undefined), defaultRig);
@@ -26,6 +26,72 @@ test('the setup picker resolves old preferences and every registered control has
   }
   assert.deepEqual(Object.keys(defaultRig.deskPositions('off')), ['left', 'right']);
   for (const side of ['left', 'right']) assert.ok(defaultRig.deskPositions(side).sem);
+});
+
+test('Alpha Prime uses the factory chart for each hand, including mirrored hats and analog inputs', () => {
+  const profile = rigForId(virpilAlphaId);
+  for (const side of ['left', 'right']) {
+    const controls = profile.controlsByDevice[side];
+    assert.deepEqual(controls.filter(c => c.kind === 'button').map(c => c.key),
+      Array.from({ length: 32 }, (_, i) => 'button' + (i + 1)));
+    assert.deepEqual(controls.filter(c => c.kind === 'axis').map(c => c.key).sort(),
+      ['rotx','roty','slider1','x','y','z']);
+    const sheet = buildSheet(null, profile.controlsByDevice, {}, profile.family);
+    const labels = rigLabels(sheet, side, null, { compact: true });
+    for (const start of [8,14,23]) {
+      const label = labels.find(item => item.key === 'button' + start);
+      const left = label.hatSlots.find(slot => slot.direction === 'left');
+      const right = label.hatSlots.find(slot => slot.direction === 'right');
+      assert.equal(left.key, 'button' + (start + (side === 'left' ? 4 : 2)));
+      assert.equal(right.key, 'button' + (start + (side === 'left' ? 2 : 4)));
+    }
+    const mini = labels.find(item => item.group === 'ministick');
+    assert.deepEqual(mini.hatSlots.map(entry => entry.direction), ['press','horizontal','vertical']);
+    assert.equal(controls.find(c => c.key === 'button32').group, controls.find(c => c.key === 'slider1').group);
+  }
+});
+
+test('unassigned VIRPIL flyouts preserve every editable slot and the separate press stages', () => {
+  const profile = rigForId(virpilAlphaId);
+  const sheet = buildSheet(null, profile.controlsByDevice, {}, profile.family);
+  const labels = rigLabels(sheet, 'all', null, { compact: true, editing: true });
+  for (const side of ['left', 'right']) {
+    const groups = labels.filter(item => item.device === side);
+    assert.deepEqual(groups.map(item => item.group).sort(),
+      ['lower-hat', 'ministick', 'rocker', 'scroll', 'thumb-hat', 'upper-hat']);
+    for (const item of groups) {
+      assert.equal(item.editSlots, true);
+      assert.equal(item.compactName, item.groupTitle);
+      assert.deepEqual(item.hatSlots.map(entry => entry.key), item.groupEntries.map(entry => entry.key));
+      assert.ok(item.hatSlots.every(entry => !entry.actions.length && entry.text === 'Unassigned'));
+    }
+    const slots = group => Object.fromEntries(groups.find(item => item.group === group).hatSlots.map(s => [s.key, s.direction]));
+    assert.deepEqual(slots('scroll'), { button19: 'press', button20: 'second-press', button21: 'up', button22: 'down' });
+    assert.deepEqual(slots('rocker'), { button28: 'press', button29: 'up', button30: 'down' });
+    for (const n of [7,13]) {
+      const item = rigLabels(sheet, side, side + ':button' + n, { compact: true }).find(item => item.active);
+      assert.equal(item.hatSlots, undefined);
+      assert.equal(item.groupEntries.length, 1);
+    }
+  }
+});
+
+test('R1-FALCON fits in front of both sticks and has separate reference markers for each axis', () => {
+  const profile = rigForId(virpilAlphaId);
+  assert.equal(profile.deskPositions('off', false).pedals, undefined);
+  const desk = profile.deskPositions('off', true);
+  assert.equal(desk.pedals[0], 0);
+  assert.ok(desk.pedals[1] > Math.max(desk.left[1], desk.right[1]));
+  const controls = profile.controlsByDevice.pedals;
+  assert.deepEqual(controls.map(c => [c.group, c.key, Boolean(c.needsCapture)]), [
+    ['rudder', 'z', false], ['left-toe', 'left-toe', true], ['right-toe', 'right-toe', true],
+  ]);
+  const sheet = controls.map(c => ({ ...c, id: c.device + ':' + c.key, rows: [] }));
+  const labels = rigLabels(sheet, 'all', null, { reference: true });
+  assert.deepEqual(labels.map(l => [l.deviceTitle, l.referenceSide]), [
+    ['Pedals', 'right'], ['Pedals', 'left'], ['Pedals', 'right'],
+  ]);
+  assert.ok(profile.anchors.pedals['left-toe'][0] < 0 && profile.anchors.pedals['right-toe'][0] > 0);
 });
 
 test('each bundled schematic covers the same control locations as the optional rig models', () => {

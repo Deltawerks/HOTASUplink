@@ -1,4 +1,5 @@
 import { createEditor } from './editor.js';
+import { isPedalToeAxis } from './bindings.mjs';
 import { applyDraft, draftDevices, previewEdit, resolveTarget, saveEdits, stageEdit } from './edit-draft.mjs';
 
 function routeSignature(rows = []) {
@@ -22,21 +23,16 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
   let destinationId = null;
   let sourceRoutes = new Map();
   let previous = null;
-  let conflictChoice = null;
   let selectedId = null;
   let slots = {};
   let captures = new Map();
   let armed = null;
-
-  function resetChoice() {
-    previous = null;
-    conflictChoice = null;
-  }
+  const captureOrigins = new Map();
 
   function clearDestination() {
     destinationId = null;
     armed = null;
-    resetChoice();
+    previous = null;
   }
 
   function waitingForTarget() {
@@ -90,14 +86,13 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
     if (!action || !target?.ok) return null;
     return previewEdit({
       profile: draft || context().profile, action, target,
-      mode: previous === 'add' ? 'add' : 'replace',
-      previous: previous === 'add' ? null : previous,
-      conflictPolicy: conflictChoice || undefined,
+      mode: previous ? 'replace' : 'add',
+      previous,
     });
   }
 
   function render() {
-    const { control: selected, profile, livePath, sourceName, loading } = context();
+    const { control: selected, profile, livePath, sourceName, sourceId, loading } = context();
     if (flow === 'action' && destinationId && destinationId !== selected?.id) clearDestination();
     const control = chosenControl(selected);
     const toggle = document.getElementById('edit-layout');
@@ -109,14 +104,15 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
     if (selectedId !== control?.id) {
       selectedId = control?.id;
       armed = null;
-      resetChoice();
+      previous = null;
     }
     const route = editing ? targetFor(control) : null;
     editor.setState({
       editing, flow, waitingForTarget: waitingForTarget(), control, route, actions: catalog, catalogError, busy: saving,
-      preview: previewFor(route), pickedAction: action, previous, conflictChoice,
+      preview: previewFor(route), pickedAction: action, previous,
       bindings: (draft || profile).bindings, changes: history.map(h => h.summary),
-      sourceName, saveLocation: livePath.replace(/[\\/]$/, '') + '\\USER\\Client\\0\\Controls\\Mappings',
+      sourceName, sourceId, sourceRevision: profile.source.revision,
+      saveLocation: livePath.replace(/[\\/]$/, '') + '\\USER\\Client\\0\\Controls\\Mappings',
       capturing: Boolean(armed),
     });
     toggle.disabled = loading || saving;
@@ -135,7 +131,7 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
     captures.clear();
     armed = null;
     action = null;
-    resetChoice();
+    previous = null;
     onMode(false);
     redraw();
   }
@@ -163,24 +159,39 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
     render();
   }
 
+  function stage(preview, summary) {
+    const start = edits.length;
+    const nextEdits = stageEdit(edits, preview);
+    const nextDraft = applyDraft(context().profile, nextEdits);
+    history.push({ start, summary });
+    edits = nextEdits;
+    draft = nextDraft;
+  }
+
   function assign(picked, selectedControl) {
-    const { control, profile } = context();
+    const { control } = context();
     if (saving || !chosenControl(control) || selectedControl?.id !== control.id ||
         action?.context !== picked?.context || action?.action !== picked?.action) return;
     const target = targetFor(control);
     const preview = previewFor(target);
     if (!preview?.ok) return;
-    const start = edits.length;
-    const nextEdits = stageEdit(edits, preview);
-    const nextDraft = applyDraft(profile, nextEdits);
-    edits = nextEdits;
-    history.push({ start, summary: {
+    stage(preview, {
       context: action.context, contextLabel: action.contextLabel, action: action.action, label: action.label, slot: target.slot, input: target.input,
-      routeLabel: 'JS' + target.slot + ' / ' + target.input.replace(/^button/, 'B').toUpperCase(),
-    } });
-    draft = nextDraft;
+    });
     action = null;
     clearDestination();
+    redraw();
+  }
+
+  function remove(row, selectedControl) {
+    const { control, profile } = context();
+    if (!editing || saving || !control || selectedControl.id !== control.id) throw new Error('Select the control again.');
+    const preview = previewEdit({
+      profile: draft || profile, action: row, mode: 'remove',
+      previous: { ...row, multiTap: Number(row.multiTap) || 1, activationMode: row.activationMode || '' },
+    });
+    stage(preview, { ...row, removed: true });
+    previous = null;
     redraw();
   }
 
@@ -188,20 +199,22 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
     if (saving || !history.length) return;
     edits = edits.slice(0, history.pop().start);
     draft = edits.length ? applyDraft(context().profile, edits) : null;
-    resetChoice();
+    previous = null;
     redraw();
   }
 
-  async function save(name) {
+  async function save(name, overwrite) {
     if (saving) throw new Error('A layout is already being saved.');
-    const { profile, sourceId } = context();
+    const { profile, sourceId, livePath } = context();
     saving = true;
     armed = null;
     render();
     let result;
     try {
       result = await window.viewer.saveLayout({
-        name, source: sourceId, expectedRevision: profile.source.revision,
+        name, source: sourceId, installation: livePath, expectedRevision: profile.source.revision,
+        ...(profile.source.pedalAxes ? { pedalAxes: profile.source.pedalAxes } : {}),
+        ...(overwrite ? { overwrite } : {}),
         emptySource: profile.source.kind === 'blank',
         edits: saveEdits(edits), devices: draftDevices(profile, edits),
       });
@@ -215,6 +228,8 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
   }
 
   const editor = createEditor({
+    onListLayouts: () => window.viewer.sources(),
+    onLayoutRevision: sourceId => window.viewer.layoutRevision(sourceId, context().livePath),
     onToggle: enabled => enabled ? open() : close(),
     onFlow: next => {
       if (saving || !['control', 'action'].includes(next) || flow === next) return;
@@ -228,21 +243,19 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
       if (action?.context === picked?.context && action?.action === picked?.action) return;
       action = picked;
       if (flow === 'action') clearDestination();
-      else resetChoice();
+      else previous = null;
       render();
     },
     onSlot: slot => {
       const { control } = context();
       if (!control) return;
-      const host = targetFor(control)?.host;
-      slots[host === 'right' || host === 'left' ? host : control.device] = Number(slot);
-      resetChoice();
+      slots[targetFor(control)?.slotKey || control.device] = Number(slot);
+      previous = null;
       render();
     },
-    onCapture: () => { armed = armed ? null : context().control?.id; render(); },
-    onPrevious: binding => { previous = binding; conflictChoice = null; render(); },
-    onConflict: policy => { conflictChoice = policy; render(); },
-    onUndo: undo, onAssign: assign, onSave: save,
+    onCapture: () => { captureOrigins.clear(); armed = armed ? null : context().control?.id; render(); },
+    onPrevious: binding => { previous = binding; render(); },
+    onUndo: undo, onAssign: assign, onRemove: remove, onSave: save,
   });
 
   // An armed lever gets its real logical input from the attached controller.
@@ -252,13 +265,21 @@ export function createEditSession({ context, redraw, onMode, onSaved }) {
     const { control, hardware } = context();
     if (control?.id !== armed || !mapped) return true;
     const device = hardware.find(d => d.id === event.id);
+    if (!device || !['left', 'right', 'pedals'].includes(mapped.host)) return true;
+    if ((control.device === 'pedals') !== (mapped.host === 'pedals')) return true;
     if (control.device === 'sem' && !/\bSEM\b/i.test(device?.name || '')) return true;
     const valid = control.kind === 'axis' ? event.type === 'axis'
       : event.type === 'button' && event.pressed;
     if (!valid) return true;
+    if (control.device === 'pedals' && control.needsCapture) {
+      if (!isPedalToeAxis(mapped.raw) || mapped.raw === control.otherToeInput || !Number.isFinite(event.value)) return true;
+      const baseline = captureOrigins.get(mapped.raw) ?? event.value - (event.delta || 0);
+      captureOrigins.set(mapped.raw, baseline);
+      if (Math.abs(event.value - baseline) < 0.15) return true;
+    }
     captures.set(armed, { device: control.device, host: mapped.host, raw: mapped.raw, controlId: armed });
     armed = null;
-    resetChoice();
+    previous = null;
     render();
     return true;
   }

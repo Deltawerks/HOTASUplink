@@ -29,7 +29,7 @@ function housing(sections) {
   return geometry;
 }
 
-export function createSchematic(device) {
+export function createSchematic(device, design) {
   const parts = [];
   const frame = 0x263747, grip = 0x344859, inset = 0x172530;
   const rocker = 0x9baab4, hat = 0x5b7282, red = 0xc34247;
@@ -47,14 +47,16 @@ export function createSchematic(device) {
   const disk = (r, h, sides = 24) => new THREE.CylinderGeometry(r, r * 1.03, h, sides);
   const localUp = new THREE.Vector3(0, 1, 0);
   function control(key, geometry, depth, color, recess = 0) {
-    const normal = new THREE.Vector3(...surfaceNormals[device][key]).normalize();
-    const center = new THREE.Vector3(...anchors[device][key]).addScaledVector(normal, -depth / 2 - recess);
+    const normal = new THREE.Vector3(...(design?.surfaceNormals || surfaceNormals)[device][key]).normalize();
+    const center = new THREE.Vector3(...(design?.anchors || anchors)[device][key]).addScaledVector(normal, -depth / 2 - recess);
     geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(localUp, normal));
     geometry.translate(center.x, center.y, center.z);
     append(geometry, color);
   }
 
-  if (device === 'sem') {
+  if (design) {
+    design.build(device, { append, housing, box, disk, control });
+  } else if (device === 'sem') {
     append(housing([[-.505,0,0,.86,.65],[-.45,0,0,.93,.70],[-.24,0,0,.93,.69],
       [.06,0,-.13,.85,.44],[.08,0,-.16,.81,.39]]), frame);
     append(box(.082,.39,.09).translate(.582,.27,-.494), hat);

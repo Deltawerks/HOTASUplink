@@ -49,7 +49,7 @@ export function createGameHandoff(verifyLayout, nextLaunch) {
     status.textContent = 'Reading the active game profile…';
     status.removeAttribute('data-result');
     try {
-      const result = await verifyLayout(saved.sourceId, saved.revision);
+      const result = await verifyLayout(saved.sourceId, saved.revision, saved.scope);
       if (current !== saved) return;
       status.dataset.result = result.status;
       if (result.status === 'match') {

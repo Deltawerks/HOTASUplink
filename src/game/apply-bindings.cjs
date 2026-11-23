@@ -1,13 +1,13 @@
 'use strict';
 
 const { readXml, serializeXml } = require('./xml.cjs');
-const { readSemHint, semSignature } = require('./export.cjs');
+const { readSemHint, readPhysicalHint, physicalHintComment } = require('./export.cjs');
+const { stickFamily } = require('../rig/device-identity.mjs');
+const { isJoystickBinding, occupied, defaultJoystickRows, effectiveJoystickRows, canonicalJoystickRows } = require('./joystick-bindings.cjs');
 
 const element = (tag, attrs = {}) => ({ tag, attrs, children: [] });
 const children = (node, tag) => node?.children.filter(child => child.tag === tag) || [];
 const slotOf = input => Number(/^js(\d+)_/i.exec(input || '')?.[1]);
-const occupied = node => /^js\d+_\s*\S/i.test(node.attrs.input || '');
-const joystickRows = node => children(node, 'rebind').filter(row => slotOf(row.attrs.input));
 const hand = device => device === 'left' || device === 'right';
 const productId = product => product.trim().replace(/\s+/g, ' ').toLowerCase();
 
@@ -45,7 +45,7 @@ function indexProfile(profile) {
       const action = node.attrs.name, id = context + '/' + action;
       if (!action || actions.has(id)) throw new Error('Missing or duplicate action name in ' + context + '.');
       if (Object.hasOwn(node.attrs, 'joystick') || node.children.some(child =>
-        child.tag === 'joystick' || (child.tag !== 'rebind' && /^js\d+_/i.test(child.attrs.input || '')))) {
+        child.tag === 'joystick' || (!isJoystickBinding(child) && /^js\d+_/i.test(child.attrs.input || '')))) {
         throw new Error('Unsupported joystick binding format for ' + id + '.');
       }
       actions.set(id, { context, action, node });
@@ -54,21 +54,39 @@ function indexProfile(profile) {
   return { groups, actions };
 }
 
-function routesFor(source, active) {
+function routesFor(source, active, scope, presetProfile) {
+  if (scope != null && (!['vkb', 'virpil'].includes(scope.family) || typeof scope.pedals !== 'boolean')) {
+    throw new Error('Choose a supported controller setup before applying or checking a layout.');
+  }
+  // An export may declare the connected pedals without assigning them. Applying
+  // a sticks-only preset must leave those active axes alone even when visible.
+  const assignedSlots = new Set();
+  if (scope?.pedals) {
+    for (const group of children(presetProfile, 'actionmap')) {
+      for (const action of children(group, 'action')) {
+        for (const row of action.children.filter(isJoystickBinding)) assignedSlots.add(slotOf(row.attrs.input));
+      }
+    }
+  }
   const routes = new Map(), targetSlots = new Set();
   for (const saved of source.values()) {
-    if (!hand(saved.device)) continue;
-    const candidates = [...active.values()].filter(actual => actual.device === saved.device);
+    const pedals = saved.device === 'pedals';
+    const family = stickFamily(saved);
+    if (pedals) {
+      if (!scope?.pedals || !assignedSlots.has(saved.slot)) continue;
+    } else if (!hand(saved.device) || (scope && family !== scope.family)) continue;
+    const sameRole = entry => entry.device === saved.device && (pedals || stickFamily(entry) === family);
+    const candidates = [...active.values()].filter(sameRole);
     const exact = saved.product && candidates.filter(actual => productId(saved.product) === productId(actual.product));
-    const matches = exact?.length ? exact : candidates;
-    const sameHand = [...source.values()].filter(other => other.device === saved.device);
-    if (matches.length !== 1 || (!exact?.length && sameHand.length !== 1) || targetSlots.has(matches[0].slot)) {
-      throw new Error('Could not uniquely match the ' + saved.device + ' stick to the active game profile.');
+    const matches = exact?.length ? exact : (family || pedals) ? candidates : [];
+    if (matches.length !== 1 || (!exact?.length && [...source.values()].filter(sameRole).length !== 1) || targetSlots.has(matches[0].slot)) {
+      const name = pedals ? 'R1-FALCON pedals' : saved.device + ' stick';
+      throw new Error('Could not uniquely match the ' + name + ' to the active game profile.');
     }
     routes.set(saved.slot, matches[0].slot);
     targetSlots.add(matches[0].slot);
   }
-  if (!routes.size) throw new Error('The layout must identify at least one left or right VKB stick.');
+  if (!routes.size) throw new Error('The layout must identify a controller in the selected setup.');
   return { routes, targetSlots };
 }
 
@@ -82,19 +100,9 @@ function remapRow(node, route, context, action) {
   if (nested.every((child, i) => child === node.children[i]) &&
       Object.keys(attrs).every(key => attrs[key] === node.attrs[key])) return node;
   const result = { ...node, attrs, children: nested };
-  const hint = readSemHint(context, action, node);
-  if (hint.physicalDevice) {
-    const key = hint.physicalKey || '';
-    result.provenanceComment = '<!-- HOTAS UPLINK SEM v1 ' + semSignature(context, action, attrs, key) + (key ? ' ' + key : '') + ' -->';
-  }
+  const hint = readPhysicalHint(context, action, node);
+  if (hint.physicalDevice) result.provenanceComment = physicalHintComment(context, action, attrs, hint.physicalDevice, hint.physicalKey);
   return result;
-}
-
-function defaultsFor(def) {
-  return (def?.defaults || []).filter(attrs => attrs.input?.trim()).map(attrs => {
-    const input = attrs.input.trim();
-    return element('rebind', { ...attrs, input: /^js\d+_/i.test(input) ? input : 'js1_' + input });
-  });
 }
 
 function shape(node) {
@@ -102,7 +110,7 @@ function shape(node) {
 }
 
 function signatures(rows, context, action) {
-  return JSON.stringify(rows.map(row => JSON.stringify([shape(row), readSemHint(context, action, row)])).sort());
+  return JSON.stringify(rows.map(row => JSON.stringify([shape(row), readPhysicalHint(context, action, row)])).sort());
 }
 
 function putAction(profile, index, context, action) {
@@ -168,12 +176,12 @@ function mergeModifiers(active, preset, routes, targetSlots, route, independentI
 /** Build a replacement active document in memory. Only represented sticks' key bindings
  * and joystick modifiers move. The active game's hardware identities, inversion, curves,
  * calibration, keyboard/mouse/gamepad bindings and other peripherals stay in that document. */
-function mergeJoystickBindings({ activeRoot, presetProfile, definitions, activeDevices, presetDevices }) {
+function mergeJoystickBindings({ activeRoot, presetProfile, definitions, activeDevices, presetDevices, scope }) {
   if (!definitions?.size) throw new Error('The installed action catalog is required to apply joystick bindings.');
   const root = readXml(Buffer.from(documentText(activeRoot)));
   const active = profileIn(root), preset = profileIn(presetProfile);
   const current = indexProfile(active), saved = indexProfile(preset);
-  const { routes, targetSlots } = routesFor(presetDevices, activeDevices);
+  const { routes, targetSlots } = routesFor(presetDevices, activeDevices, scope, preset);
   function route(slot) {
     if (routes.has(slot)) return routes.get(slot);
     const source = presetDevices.get(slot);
@@ -187,15 +195,18 @@ function mergeJoystickBindings({ activeRoot, presetProfile, definitions, activeD
   for (const id of new Set([...definitions.keys(), ...current.actions.keys(), ...saved.actions.keys()])) {
     const def = definitions.get(id), source = saved.actions.get(id), destination = current.actions.get(id);
     const { context, action } = def || source || destination;
-    const original = joystickRows(destination?.node), selected = joystickRows(source?.node);
-    const defaults = defaultsFor(def);
-    const previous = original.length ? original : defaults;
-    const wanted = [];
-    for (const row of selected.length ? selected : defaults) {
+    const original = destination?.node.children.filter(isJoystickBinding) || [];
+    const selected = source?.node.children.filter(isJoystickBinding) || [];
+    const defaults = defaultJoystickRows(def);
+    const previous = effectiveJoystickRows(destination?.node, def);
+    const remappedRows = [];
+    for (const row of effectiveJoystickRows(source?.node, def)) {
       if (!occupied(row)) continue;
       const slot = slotOf(row.attrs.input), device = presetDevices.get(slot);
       if (!routes.has(slot)) {
-        if (selected.length && (!device?.product || /vkb/i.test(device.product))) {
+        const family = stickFamily(device);
+        if (selected.includes(row) && !hand(device?.device) && device?.device !== 'pedals' &&
+            (!device?.product || (family && (!scope || family === scope.family)))) {
           throw new Error('The layout does not identify which stick owns joystick ' + slot + '.');
         }
         continue;
@@ -209,17 +220,24 @@ function mergeJoystickBindings({ activeRoot, presetProfile, definitions, activeD
       }
       const remapped = remapRow(row, route, context, action);
       collectInputs(remapped, appliedInputs);
-      wanted.push(remapped);
+      remappedRows.push(remapped);
     }
     const others = previous.filter(row => occupied(row) && !targetSlots.has(slotOf(row.attrs.input)));
-    wanted.push(...others);
-    const independent = [...children(destination?.node, 'rebind').filter(row => !slotOf(row.attrs.input)), ...others];
+    const independent = [...(destination?.node.children || []).filter(row =>
+      ['rebind', 'addbind'].includes(row.tag) && !isJoystickBinding(row)), ...others];
     for (const row of independent) collectInputs(row, independentInputs);
+    if (!remappedRows.length && !selected.some(row => routes.has(slotOf(row.attrs.input))) &&
+        !previous.some(row => targetSlots.has(slotOf(row.attrs.input)))) {
+      expected.set(id, signatures(previous.filter(occupied), context, action));
+      continue;
+    }
+    // A partial-device apply keeps an unrelated joystick's primary binding first.
+    const previousPrimary = previous.find(row => row.tag === 'rebind' && occupied(row));
+    const wanted = canonicalJoystickRows(others.includes(previousPrimary) ? [...others, ...remappedRows] : [...remappedRows, ...others]);
     const semanticallyWanted = signatures(wanted, context, action);
     expected.set(id, semanticallyWanted);
     const fallback = signatures(defaults.filter(occupied), context, action);
-    // An explicit joystick row (even an empty one) masks all joystick defaults
-    // for its action. Keep explicit intent on either side of a partial-device merge.
+    // Keep explicit intent on either side of a partial-device merge, including clears.
     const hasSourceOverride = selected.some(row => routes.has(slotOf(row.attrs.input)) || !occupied(row));
     const keepOtherOverride = original.some(row => !targetSlots.has(slotOf(row.attrs.input)));
     const useOverride = hasSourceOverride || keepOtherOverride || semanticallyWanted !== fallback;
@@ -228,21 +246,20 @@ function mergeJoystickBindings({ activeRoot, presetProfile, definitions, activeD
     const node = destination?.node || putAction(active, current, context, action);
     const replacements = useOverride ? wanted : [];
     if (useOverride && !wanted.length) replacements.push(element('rebind', { input: 'js' + [...targetSlots][0] + '_ ' }));
-    const keep = node.children.filter(row => !original.includes(row) || replacements.includes(row));
-    node.children = keep.concat(replacements.filter(row => !keep.includes(row)));
+    node.children = node.children.filter(row => !isJoystickBinding(row)).concat(replacements);
   }
   mergeModifiers(active, preset, routes, targetSlots, route, independentInputs, appliedInputs);
   const text = documentText(root);
   const result = indexProfile(profileIn(readXml(Buffer.from(text))));
   for (const [id, intended] of expected) {
     const def = definitions.get(id), entry = result.actions.get(id);
-    const rows = joystickRows(entry?.node);
+    const rows = effectiveJoystickRows(entry?.node, def);
     const { context, action } = def || entry || saved.actions.get(id);
-    if (signatures((rows.length ? rows : defaultsFor(def)).filter(occupied), context, action) !== intended) {
+    if (signatures(rows.filter(occupied), context, action) !== intended) {
       throw new Error('Could not verify the prepared joystick bindings for ' + id + '.');
     }
   }
   return text;
 }
 
-module.exports = { mergeJoystickBindings };
+module.exports = { mergeJoystickBindings, routesFor };

@@ -27,6 +27,7 @@
       <button data-page="monitor" aria-label="Input monitor" title="Input monitor"><i data-icon="pulse"></i><span>Input monitor</span></button>
     </nav>
     <div class="profile-tools">
+      <label class="controller-choice" for="controller-setup"><span>Controllers</span><select id="controller-setup" aria-label="Controller setup"></select></label>
       <button id="source" class="profile-button" aria-labelledby="source-label profile-name" aria-describedby="game-context" aria-haspopup="dialog" title="Choose layout">
         <i data-icon="layers"></i>
         <span class="profile-caption"><span class="sr-only" id="source-label">Layout source</span><small id="game-context">STAR CITIZEN <span>/</span> LIVE</small><strong id="profile-name">Loading active profile</strong></span>
@@ -52,13 +53,13 @@
           </div>
           <div class="stage"><div id="rig-canvas" aria-label="Interactive 3D flight controls"></div>
             <div id="scene-status" role="status">Loading controller models…</div>
-            <span id="button-labels-empty" class="orbit-hint" role="status" hidden>No bindings on the controls in this view.</span>
+            <span id="button-labels-empty" class="orbit-hint" role="status" hidden>No bindings on the controls in this view. <button type="button" id="use-automatic" class="text-button" hidden>Use automatic layout</button></span>
             <div class="camera-tools"><button id="home" class="square small-square" aria-label="Reset camera" title="Reset camera"><i data-icon="home"></i></button></div>
             <span class="orbit-hint"><i data-icon="orbit"></i> Drag to orbit <b>·</b> Scroll to zoom at cursor</span>
           </div>
           <div class="rig-bar">
-            <label class="controller-choice" for="controller-setup"><span id="controller-setup-label">Controller setup</span><select id="controller-setup" aria-labelledby="controller-setup-label"></select></label>
             <div id="module-controls"><span>SEM module</span><div id="placement" class="segmented" role="group" aria-label="SEM module placement"><button data-place="off">Off</button><button data-place="left">Outside left</button><button data-place="right">Outside right</button></div></div>
+            <div id="pedal-controls" hidden><span id="pedal-name">Rudder pedals</span><div class="segmented" role="group" aria-labelledby="pedal-name"><button data-pedals="off">Off</button><button data-pedals="on">On</button></div></div>
           </div>
         </div>
         <section class="inspector">
@@ -97,7 +98,17 @@
     </section>
     <div id="notice" hidden><span id="notice-message" role="status"></span> <button type="button" id="notice-folder" class="text-button" hidden>Choose LIVE folder…</button></div>
   </main>
-  <footer><span><i data-icon="eye"></i><span id="mode-status">Viewing layout</span></span><span id="source-status">Reading local configuration</span><button id="hardware" aria-haspopup="dialog"><i data-icon="settings"></i>Settings</button><button id="diagnostics">Profile details <i data-icon="arrow"></i></button></footer>
+  <footer>
+    <span><i data-icon="eye"></i><span id="mode-status">Viewing layout</span></span>
+    <span id="source-status">Reading local configuration</span>
+    <span class="community-credit">Made for the Star Citizen community</span>
+    <button id="hardware" aria-haspopup="dialog"><i data-icon="settings"></i>Settings</button>
+    <button id="diagnostics">Profile details <i data-icon="arrow"></i></button>
+  </footer>
+  <dialog id="controller-welcome" aria-labelledby="welcome-title" aria-describedby="welcome-hint">
+    <div class="dialog-head"><h2 id="welcome-title">Choose your controllers</h2></div>
+    <div class="welcome-body"><p class="dialog-note" id="welcome-hint">You can switch setups from the top bar at any time.</p><div id="welcome-choices"></div></div>
+  </dialog>
   <dialog id="picker" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><button class="square small-square" id="close-dialog" aria-label="Close"><i data-icon="close"></i></button></div><div id="dialog-content"></div></dialog>
   <dialog id="next-launch-dialog" aria-labelledby="next-launch-title" aria-describedby="next-launch-summary next-launch-detail">
     <div class="dialog-head"><h2 id="next-launch-title"></h2></div>

@@ -11,6 +11,6 @@ The Barlow fonts are copyright 2017 The Barlow Project Authors. In the source ch
 
 ## Controller models
 
-DeltaWerks independently develops HOTAS Uplink and created its 3D models from photographs of its own equipment. VKB product names identify the compatible hardware. DeltaWerks supplies its models under the project license. [Project license](LICENSE)
+HOTAS Uplink is an independent DeltaWerks tool for the Star Citizen community. The 3D models help owners match a physical control to its in-game binding. DeltaWerks created the VKB models from photographs of its own equipment. The VIRPIL right-hand stick was reconstructed from photographs supplied by a controller owner. The left-hand view mirrors that reconstruction. The R1-FALCON pedal view uses a supplied model optimized for this app. VKB and VIRPIL product names identify the compatible hardware. DeltaWerks supplies its models under the project license. [Project license](LICENSE)
 
-The source and Windows packages include the finished models of the left Omni-Throttle (`left.glb`), right Gladiator EVO stick (`right.glb`), and GNX SEM (`sem.glb`). Each file contains its mesh and textures. The source stores these files in `assets/rig/`. In the Windows ZIP they are in `resources/app/assets/rig/`.
+The source and Windows packages include the finished models used for the VKB Gladiator EVO, Omni-Throttle, GNX SEM, VIRPIL Constellation ALPHA pair and R1-FALCON pedals. The source stores these files in `assets/rig/`. In the Windows ZIP they are in `resources/app/assets/rig/`.

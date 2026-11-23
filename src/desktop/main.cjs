@@ -2,7 +2,8 @@ const { app, BrowserWindow, dialog, ipcMain, net, protocol } = require('electron
 const fs = require('node:fs');
 const path = require('node:path');
 const { fileURLToPath, pathToFileURL } = require('node:url');
-const { loadProfile, listSources, listActions, saveLayout, verifyLayout, applyNextLaunch } = require('../game/profile.cjs');
+const { loadProfile, listSources, listActions, namedLayoutRevision, saveLayout, verifyLayout, applyNextLaunch } = require('../game/profile.cjs');
+const { falconStarterId } = require('../rig/falcon-starter.mjs');
 const { getActiveFileState, restoreActiveFile } = require('../game/active-files.cjs');
 const { startInput } = require('../input');
 
@@ -103,11 +104,12 @@ function getLivePath() {
 async function listLayouts() {
   const sources = await listSources(livePath);
   return sources
-    .filter((s) => s.kind === 'export' || s.kind === 'builtin')
+    .filter((s) => ['export', 'builtin', 'starter'].includes(s.kind))
     .map((s) => ({
-      id: s.kind === 'builtin' ? s.path : 'export:' + path.basename(s.path),
+      id: s.kind === 'export' ? 'export:' + path.basename(s.path) : s.path,
       kind: s.kind,
       name: s.name,
+      manufacturer: s.manufacturer,
     }));
 }
 
@@ -119,6 +121,7 @@ function sourceOptions(id) {
   if (typeof id !== 'string') throw new Error('Invalid layout source.');
   if (id === 'active') return { livePath };
   if (id === 'blank') return { livePath, blank: true };
+  if (id === 'starter:vkb' || id === 'starter:virpil' || id === falconStarterId) return { livePath, profilePath: id };
   if (id.startsWith('builtin:')) {
     const key = id.slice(8);
     if (!['gnx', 'scg'].includes(key)) throw new Error('Unknown game preset.');
@@ -135,11 +138,11 @@ function sourceOptions(id) {
     throw new Error('Invalid layout filename.');
   return { livePath, profilePath: path.join(livePath, mappingDirectory, filename) };
 }
-ipcMain.handle('viewer:profile', (_event, id = 'active') => loadProfile(sourceOptions(id)));
+ipcMain.handle('viewer:profile', (_event, id = 'active', pedalAxes) => loadProfile({ ...sourceOptions(id), pedalAxes }));
 ipcMain.handle('viewer:actions', (_event, id) => listActions(sourceOptions(id)));
-ipcMain.handle('viewer:verify-layout', (_event, id, expectedRevision) => {
+ipcMain.handle('viewer:verify-layout', (_event, id, expectedRevision, scope) => {
   if (typeof id !== 'string' || !id.startsWith('export:')) throw new Error('Choose a saved layout to check.');
-  return verifyLayout({ ...sourceOptions(id), expectedRevision });
+  return verifyLayout({ ...sourceOptions(id), expectedRevision, scope });
 });
 async function writeProfile(operation) {
   if (saving) throw new Error('A layout change is already in progress. Wait for it to finish.');
@@ -153,18 +156,28 @@ async function writeProfile(operation) {
 function requireInstallation(installation) {
   if (installation !== livePath) throw new Error('The game installation changed. Open the confirmation again.');
 }
-ipcMain.handle('viewer:save-layout', (_event, { source, expectedRevision, name, edits, devices, emptySource }) => {
+function exportFilename(id) {
+  if (typeof id !== 'string' || !id.startsWith('export:')) throw new Error('Choose a saved layout.');
+  return path.basename(sourceOptions(id).profilePath);
+}
+ipcMain.handle('viewer:layout-revision', (_event, id, installation) => {
+  requireInstallation(installation);
+  return namedLayoutRevision(livePath, exportFilename(id));
+});
+ipcMain.handle('viewer:save-layout', (_event, { source, expectedRevision, name, edits, devices, emptySource, installation, overwrite, pedalAxes }) => {
+  if (installation !== undefined || overwrite) requireInstallation(installation);
   const options = sourceOptions(source);
   if (emptySource && source === 'active') options.blank = true;
-  return writeProfile(() => saveLayout({ ...options, expectedRevision, name, edits, devices }));
+  if (overwrite) options.overwrite = { filename: exportFilename(overwrite.sourceId), expectedRevision: overwrite.expectedRevision };
+  return writeProfile(() => saveLayout({ ...options, expectedRevision, name, edits, devices, pedalAxes }));
 });
 ipcMain.handle('viewer:next-launch-status', async () => {
   const installation = livePath;
   return { ...await getActiveFileState(installation), installation };
 });
-ipcMain.handle('viewer:apply-next-launch', (_event, { source, expectedRevision, expectedActiveRevision, installation }) => {
+ipcMain.handle('viewer:apply-next-launch', (_event, { source, expectedRevision, expectedActiveRevision, installation, scope }) => {
   requireInstallation(installation);
-  return writeProfile(() => applyNextLaunch({ ...sourceOptions(source), expectedRevision, expectedActiveRevision }));
+  return writeProfile(() => applyNextLaunch({ ...sourceOptions(source), expectedRevision, expectedActiveRevision, scope }));
 });
 ipcMain.handle('viewer:restore-previous-bindings', (_event, { expectedActiveRevision, backupId, installation }) => {
   requireInstallation(installation);

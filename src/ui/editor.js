@@ -1,4 +1,6 @@
-const unitName = { left: 'Left stick', right: 'Right stick', sem: 'GNX SEM', unknown: 'Saved input' };
+import { normalizeActivationMode } from './binding-gesture.mjs';
+
+const unitName = { left: 'Left stick', right: 'Right stick', sem: 'GNX SEM', pedals: 'Rudder pedals', unknown: 'Saved input' };
 const keyFor = (action) => JSON.stringify([action.context, action.action]);
 const titleFor = (action) => action.label || action.action;
 const contextFor = (action) => action.contextLabel || action.context || 'Other actions';
@@ -22,6 +24,21 @@ function routeText(route) {
   return 'JS' + route.slot + ' / ' + route.input.replace(/^button(\d+)$/i, 'B$1').toUpperCase();
 }
 
+function gestureText(row, input = row.input) {
+  const taps = Number(row.multiTap) || 1;
+  const mode = row.activationMode || '';
+  const normalized = normalizeActivationMode(mode);
+  const modeLabel = normalized === 'onhold' ? 'Hold' : mode.replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ').toLowerCase().replace(/^./, first => first.toUpperCase());
+  if (taps > 1) {
+    const count = taps === 2 ? 'Double tap' : taps + ' taps';
+    return normalized === 'press' || modeLabel === count ? count : count + ' + ' + modeLabel;
+  }
+  if (normalized !== 'press') return modeLabel;
+  if (!mode && row.gesture) return row.gesture;
+  return /^(?:[xyz]|rot[xyz]|r[xyz]|slider\d+)$/i.test(input || '') ? 'Axis' : 'Tap';
+}
+
 function searchText(value) {
   return value.toLowerCase().replace(/[_\-]+/g, ' ').trim();
 }
@@ -35,15 +52,28 @@ function sameBinding(a, b) {
     (a.activationMode || '') === (b.activationMode || '') && (Number(a.multiTap) || 1) === (Number(b.multiTap) || 1);
 }
 
-export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlot, onPrevious, onConflict, onCapture, onFlow, onChooseDestination }) {
+function savedLayout(id, profileName) {
+  const filename = id.slice('export:'.length);
+  const fileLabel = /^layout_(.+)_exported\.xml$/i.exec(filename)?.[1] || filename.replace(/\.xml$/i, '');
+  const name = profileName && profileName !== filename ? profileName : fileLabel;
+  return { id, filename, fileLabel, name };
+}
+
+export function createEditor({ onToggle, onAssign, onRemove, onSave, onListLayouts, onLayoutRevision, onUndo, onPick, onSlot, onPrevious, onCapture, onFlow, onChooseDestination }) {
   const toggle = document.getElementById('edit-layout');
   const host = document.getElementById('layout-editor');
   const state = {
     editing: false, flow: 'control', control: null, route: null, actions: [], bindings: [], changes: [],
-    sourceName: '', saveLocation: '', busy: false, catalogError: '', preview: null, previous: null, conflictChoice: null,
+    sourceName: '', saveLocation: '', busy: false, catalogError: '', preview: null, previous: null,
   };
   let pending = false;
   let draftClose = null;
+  let currentSave = null;
+  let nameEdited = false;
+  let saveTargets = [];
+  let loadingTargets = false;
+  let listRequest = 0;
+  let replacement = null;
   let catalog = [];
   let byAction = new Map();
   const title = node('h2', '', 'Binding editor');
@@ -137,6 +167,9 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
   name.type = 'text';
   name.id = 'editor-layout-name';
   name.autocomplete = 'off';
+  const suggestions = node('datalist');
+  suggestions.id = 'editor-saved-layouts';
+  name.setAttribute('list', suggestions.id);
   field.append(name);
   const location = node('p', 'editor-path');
   const error = node('p', 'editor-form-error');
@@ -146,7 +179,7 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
   const confirm = button('', 'editor-primary');
   confirm.type = 'submit';
   controls.append(back, confirm);
-  form.append(summary, field, location, error, controls);
+  form.append(summary, field, suggestions, location, error, controls);
   dialog.append(dialogHead, form);
   document.body.append(dialog);
 
@@ -206,7 +239,10 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
     const needsRouting = control && (state.route?.needsSlot || state.route?.needsCapture);
     const routeControl = control?.id || '';
     if (routeDetails.dataset.control !== routeControl || needsRouting) routeDetails.open = Boolean(needsRouting);
-    if (assignments.dataset.control !== routeControl) assignments.open = false;
+    const rows = state.route?.assignedRows || control?.rows || [];
+    if (assignments.dataset.control !== routeControl || assignments.hidden) {
+      assignments.open = rows.length > 0 && state.flow === 'control';
+    }
     routeDetails.dataset.control = assignments.dataset.control = routeControl;
     routeDetails.hidden = !control || (!state.route?.ok && !needsRouting);
     routing.replaceChildren();
@@ -238,14 +274,28 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
       routing.append(capture);
     }
     targetRows.replaceChildren();
-    const rows = control?.rows || [];
     assignments.hidden = rows.length === 0;
     assignmentTitle.textContent = rows.length === 1 ? '1 current assignment' : rows.length + ' current assignments';
     if (!control) return;
     for (const row of rows) {
       const li = node('li', '');
-      li.append(node('strong', '', titleFor(row)),
-        node('small', '', [contextFor(row), row.gesture, routeText(row)].filter(Boolean).join(' · ')));
+      const label = node('div', '');
+      label.append(node('strong', '', titleFor(row)),
+        node('small', '', [contextFor(row), gestureText(row), routeText(row)].filter(Boolean).join(' · ')));
+      li.append(label);
+      if (onRemove && state.flow === 'control') {
+        const remove = button('Remove', 'editor-secondary');
+        remove.title = 'Remove ' + titleFor(row) + ' from ' + routeText(row);
+        remove.disabled = Boolean(state.busy);
+        remove.addEventListener('click', () => {
+          if (pending || state.busy) return;
+          try {
+            onRemove(row, control);
+            status.textContent = titleFor(row) + ' removal staged.';
+          } catch (err) { report(err); }
+        });
+        li.append(remove);
+      }
       targetRows.append(li);
     }
   }
@@ -253,67 +303,63 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
   function showPreview() {
     const action = selectedAction();
     const priorFocus = preview.contains(document.activeElement) ? document.activeElement.id : '';
+    const priorMove = preview.querySelector('#editor-move-input');
     preview.replaceChildren();
+    assign.textContent = 'Assign';
     review.hidden = !action;
     if (action) {
       const info = state.preview;
       const current = info?.before || (state.bindings || []).filter((route) => route.context === action.context && route.action === action.action);
       const inputs = [...new Set(current.map(routeText).filter(Boolean))];
-      preview.append(node('strong', '', titleFor(action)), node('small', '', contextFor(action)));
-      const target = routeText(state.route);
+      const target = state.route?.ok ? routeText(state.route) : '';
+      const atTarget = target ? (info?.after || current).filter(row => routeText(row) === target) : [];
+      const gestures = atTarget.length ? [...new Set(atTarget.map(row => gestureText(row)))] :
+        [gestureText(state.previous || action, state.route?.input)];
+      preview.append(node('strong', '', titleFor(action) + ' · ' + gestures.join(' / ')), node('small', '', contextFor(action)));
+      const otherInputs = current.filter(route => routeText(route) !== target);
       if (target) {
-        const prior = state.previous && state.previous !== 'add' ? state.previous : current.length === 1 ? current[0] : null;
-        let operation = 'Destination · ' + target;
-        if (state.previous === 'add') operation = 'Add ' + target + ' as another input';
-        else if (prior) operation = 'Move ' + routeText(prior) + ' → ' + target;
-        else if (!current.length) operation = 'Assign to ' + target;
-        preview.append(node('p', 'editor-route-preview', operation));
+        assign.textContent = state.previous ? 'Move binding' : current.length ? 'Add input' : 'Assign';
+        preview.append(node('p', 'editor-route-preview', 'Assign to ' + target));
+        if (info?.ok && info.conflicts?.length) {
+          for (const row of info.conflicts) {
+            preview.append(node('p', '', 'Removes ' + titleFor(row) + ' · ' + gestureText(row) + ' from ' + routeText(row)));
+          }
+          assign.textContent = 'Replace assignment';
+        }
       } else if (inputs.length) preview.append(node('p', '', 'Currently on ' + inputs.join(', ')));
-      if (target && current.length > 1 && onPrevious) {
-        const field = node('label', 'editor-routing-field', 'Input to move');
+      if (target && otherInputs.length && onPrevious) {
+        const routes = [...new Set(otherInputs.map(routeText))].join(', ');
+        preview.append(node('p', '', state.previous ? 'Moving from ' + routeText(state.previous) : 'Also on ' + routes));
+        const details = node('details', 'editor-disclosure');
+        details.id = 'editor-move-input';
+        details.dataset.key = JSON.stringify([keyFor(action), target]);
+        details.open = priorMove?.dataset.key === details.dataset.key && priorMove.open;
+        const summary = node('summary', '', 'Move an existing input');
+        summary.id = 'editor-move-toggle';
+        const field = node('label', 'editor-routing-field', 'Existing inputs for this action');
         const pick = node('select', '');
         pick.id = 'editor-previous';
-        const none = node('option', '', 'Choose an existing input');
-        none.value = '';
-        pick.append(none);
-        const additional = node('option', '', 'Add another input');
-        additional.value = 'add';
-        pick.append(additional);
-        let selected = state.previous === 'add' ? 'add' : '';
-        current.forEach((route, index) => {
-          const gesture = route.gesture || (Number(route.multiTap) > 1 ? route.multiTap + ' taps' : route.activationMode);
-          const option = node('option', '', [routeText(route), gesture].filter(Boolean).join(' · '));
+        const keep = node('option', '', 'Keep ' + routes);
+        keep.value = '';
+        pick.append(keep);
+        let selected = '';
+        otherInputs.forEach((route, index) => {
+          const option = node('option', '', 'Move from ' + routeText(route) + ' · ' + gestureText(route));
           option.value = String(index);
           if (sameBinding(route, state.previous)) selected = option.value;
           pick.append(option);
         });
         pick.value = selected;
         pick.addEventListener('change', () => {
-          if (pick.value === 'add') onPrevious('add');
-          else onPrevious(pick.value === '' ? null : current[Number(pick.value)]);
+          onPrevious(pick.value === '' ? null : otherInputs[Number(pick.value)]);
         });
         field.append(pick);
-        preview.append(field);
+        details.append(summary, field);
+        preview.append(details);
       }
-      if (info?.conflicts?.length) {
-        const field = node('fieldset', 'editor-conflicts');
-        field.append(node('legend', '', 'Same-context assignments'));
-        field.append(node('p', '', [...new Set(info.conflicts.map(titleFor))].join(' · ')));
-        for (const [value, text] of [['keep', 'Keep both'], ['replace', 'Replace conflicting assignments']]) {
-          const label = node('label', '');
-          const radio = node('input', '');
-          radio.type = 'radio';
-          radio.name = 'editor-overlap';
-          radio.id = 'editor-conflict-' + value;
-          radio.value = value;
-          radio.checked = state.conflictChoice === value;
-          radio.addEventListener('change', () => { if (radio.checked) onConflict?.(value); });
-          label.append(radio, document.createTextNode(text));
-          field.append(label);
-        }
-        preview.append(field);
-      }
-      if (info?.reason && !info.ok && !info.needsConflictChoice && !info.needsPrevious) preview.append(node('p', 'editor-warning', info.reason));
+      const reason = state.route && !state.route.ok ? state.route.reason : info?.reason;
+      if (reason && !info?.ok) preview.append(node('p', 'editor-warning', reason));
+      else if (!state.control && state.waitingForTarget) preview.append(node('p', '', 'Press a control or click it on the model to choose the destination.'));
     }
     if (priorFocus) preview.querySelector('#' + priorFocus)?.focus({ preventScroll: true });
     assign.disabled = pending || state.busy || !action || !state.control || !routeText(state.route) || state.route?.ok === false ||
@@ -328,7 +374,7 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
     changes.replaceChildren(...state.changes.map((change) => {
       const row = node('li', '');
       const label = node('div', '');
-      label.append(node('strong', '', titleFor(change)), node('small', '',
+      label.append(node('strong', '', (change.removed ? 'Remove ' : '') + titleFor(change)), node('small', '',
         [change.contextLabel || change.context, change.routeLabel || routeText(change)].filter(Boolean).join(' · ')));
       row.append(label);
       return row;
@@ -343,29 +389,106 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
     undo.disabled = !state.changes.length || Boolean(pending || state.busy);
     controlFirst.disabled = actionFirst.disabled = chooseDestination.disabled = Boolean(pending || state.busy);
     search.disabled = choices.disabled = Boolean(pending || state.busy);
-    confirm.disabled = back.disabled = Boolean(pending);
+    back.disabled = Boolean(pending);
+    if (dialog.open && dialog.dataset.kind === 'save') showSaveDestination();
+    else confirm.disabled = Boolean(pending);
     name.readOnly = pending;
     toggle.setAttribute('aria-pressed', String(Boolean(state.editing)));
     toggle.textContent = state.editing ? 'Editing layout' : 'Edit layout';
     showPreview();
   }
 
+  function matchingSaveTargets() {
+    const value = name.value.trim().toLowerCase();
+    if (!value) return [];
+    if (!nameEdited && currentSave?.name.toLowerCase() === value) return [currentSave];
+    const exact = saveTargets.find(layout => layout.filename.toLowerCase() === value);
+    if (exact) return [exact];
+    return saveTargets.filter(layout => layout.name.toLowerCase() === value || layout.fileLabel.toLowerCase() === value);
+  }
+
+  function showSaveDestination() {
+    const matches = matchingSaveTargets();
+    const target = matches[0];
+    const current = target && target.id === currentSave?.id;
+    dialogTitle.textContent = replacement ? 'Replace saved layout?' : 'Save layout';
+    field.hidden = Boolean(replacement);
+    back.textContent = replacement ? 'Back' : 'Cancel';
+    if (replacement) {
+      summary.textContent = 'Replace ' + replacement.layout.filename + ' with the layout you are editing?';
+      confirm.textContent = 'Replace layout';
+    } else if (matches.length > 1) {
+      summary.textContent = 'Several layouts use this name. Choose ' + matches.map(layout => layout.filename).join(' or ') + '.';
+      confirm.textContent = 'Review replacement';
+    } else if (current) {
+      summary.textContent = 'Save your changes to ' + currentSave.filename + '. Enter a different name to save a copy.';
+      confirm.textContent = 'Save changes';
+    } else if (target) {
+      summary.textContent = target.filename + ' already exists. Review the replacement before saving.';
+      confirm.textContent = 'Review replacement';
+    } else {
+      summary.textContent = 'Save a named copy of ' + (state.sourceName || 'this layout') + '.';
+      confirm.textContent = 'Save new layout';
+    }
+    confirm.disabled = Boolean(pending || matches.length > 1 || (loadingTargets && (!current || nameEdited)));
+  }
+
+  async function loadSaveTargets() {
+    const request = ++listRequest;
+    loadingTargets = true;
+    showSaveDestination();
+    try {
+      const sources = await onListLayouts();
+      if (request !== listRequest) return;
+      const otherLayouts = sources.filter(s => s.kind === 'export' && s.id !== currentSave?.id).map(s => savedLayout(s.id));
+      saveTargets = currentSave ? [currentSave, ...otherLayouts] : otherLayouts;
+      const counts = new Map();
+      for (const layout of saveTargets) {
+        const aliases = new Set([layout.name.toLowerCase(), layout.fileLabel.toLowerCase(), layout.filename.toLowerCase()]);
+        for (const alias of aliases) counts.set(alias, (counts.get(alias) || 0) + 1);
+      }
+      suggestions.replaceChildren(...saveTargets.map(layout => {
+        const option = node('option');
+        option.value = counts.get(layout.name.toLowerCase()) > 1 ? layout.filename : layout.name;
+        option.label = layout.filename;
+        return option;
+      }));
+    } catch (err) {
+      if (request === listRequest && !error.textContent) error.textContent = messageFor(err);
+    } finally {
+      if (request === listRequest) {
+        loadingTargets = false;
+        showSaveDestination();
+      }
+    }
+  }
+
   function openDialog(kind) {
     const saving = kind === 'save';
     dialog.dataset.kind = kind;
-    dialogTitle.textContent = saving ? 'Save a new layout' : 'Discard staged changes?';
     const count = state.changes.length;
     const changeText = count === 1 ? '1 staged change' : count + ' staged changes';
-    summary.textContent = saving
-      ? 'Create a named copy of ' + (state.sourceName || 'this layout') + (count ? ' with ' + changeText : '') + '.'
-      : 'Closing the editor will discard ' + changeText + '.';
     name.required = saving;
     field.hidden = !saving;
     location.hidden = !saving || !state.saveLocation;
     location.textContent = state.saveLocation || '';
     error.textContent = '';
-    back.textContent = saving ? 'Cancel' : 'Keep editing';
-    confirm.textContent = saving ? 'Save new layout' : 'Discard changes';
+    replacement = null;
+    if (saving) {
+      currentSave = state.sourceId?.startsWith('export:') ? savedLayout(state.sourceId, state.sourceName) : null;
+      nameEdited = false;
+      saveTargets = currentSave ? [currentSave] : [];
+      suggestions.replaceChildren();
+      name.value = currentSave?.name || '';
+      name.placeholder = 'Type a name or choose a saved layout';
+      void loadSaveTargets();
+    } else {
+      dialogTitle.textContent = 'Discard staged changes?';
+      summary.textContent = 'Closing the editor will discard ' + changeText + '.';
+      back.textContent = 'Keep editing';
+      confirm.textContent = 'Discard changes';
+      confirm.disabled = false;
+    }
     dialog.showModal();
     if (saving) { name.focus(); name.select(); } else back.focus();
   }
@@ -389,6 +512,8 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
 
   function handleDialogClose() {
     if (dialog.open) return;
+    listRequest++;
+    loadingTargets = false;
     if (draftClose) {
       const { resolve } = draftClose;
       draftClose = null;
@@ -397,10 +522,21 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
   }
   dialog.addEventListener('close', handleDialogClose);
   dialog.addEventListener('cancel', (event) => { if (pending) event.preventDefault(); });
-  back.addEventListener('click', () => dialog.close());
+  back.addEventListener('click', () => {
+    if (!replacement) { dialog.close(); return; }
+    replacement = null;
+    error.textContent = '';
+    showSaveDestination();
+    name.focus();
+  });
+  name.addEventListener('input', () => {
+    nameEdited = true;
+    error.textContent = '';
+    showSaveDestination();
+  });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (pending) return;
+    if (pending || confirm.disabled) return;
     error.textContent = '';
     if (dialog.dataset.kind === 'discard') {
       const confirmation = draftClose;
@@ -411,17 +547,31 @@ export function createEditor({ onToggle, onAssign, onSave, onUndo, onPick, onSlo
     }
     const value = name.value.trim();
     if (!value) { error.textContent = 'Enter a layout name.'; name.focus(); return; }
+    const target = replacement?.layout || matchingSaveTargets()[0];
     pending = true;
     buttons();
     try {
-      await onSave(value);
+      if (target && target.id !== currentSave?.id && !replacement) {
+        const revision = await onLayoutRevision(target.id);
+        replacement = { layout: target, revision };
+        showSaveDestination();
+        return;
+      }
+      const overwrite = target ? {
+        sourceId: target.id,
+        expectedRevision: replacement ? replacement.revision : state.sourceRevision,
+      } : null;
+      await onSave(target?.name || value, overwrite);
       if (dialog.open) dialog.close();
     } catch (err) {
       error.textContent = messageFor(err);
+      replacement = null;
+      void loadSaveTargets();
       name.focus();
     } finally {
       pending = false;
       buttons();
+      if (replacement && dialog.open) confirm.focus();
     }
   });
   async function handleToggle() {

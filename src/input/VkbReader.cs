@@ -7,7 +7,7 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-// DirectInput8W. Only game controllers with VKB's USB vendor ID are opened.
+// DirectInput8W for supported flight controller vendors.
 // DISCL_BACKGROUND | DISCL_NONEXCLUSIVE lets a game use the sticks concurrently.
 internal static class DirectInput
 {
@@ -353,7 +353,7 @@ internal static class Reader
     private static volatile bool stop;
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     internal static void Emit(object value) { Console.WriteLine(Json.Serialize(value)); }
-    private static void Listening() { Emit(new { type = "status", level = "info", message = "Listening for VKB controls in the background." }); }
+    private static void Listening() { Emit(new { type = "status", level = "info", message = "Listening for flight controls in the background." }); }
 
     private static List<DirectInput.DeviceInfo> ListConnected(IntPtr input)
     {
@@ -361,7 +361,8 @@ internal static class Reader
         DirectInput.Check(DirectInput.Method<DirectInput.ListDevices>(input, DirectInput.EnumDevices)(
             input, 4, delegate(IntPtr desc, IntPtr context) {
                 var info = (DirectInput.DeviceInfo)Marshal.PtrToStructure(desc, typeof(DirectInput.DeviceInfo));
-                if (BitConverter.ToUInt16(info.Product.ToByteArray(), 0) == 0x231d) connected.Add(info);
+                ushort vendor = BitConverter.ToUInt16(info.Product.ToByteArray(), 0);
+                if (vendor == 0x231d || vendor == 0x3344) connected.Add(info);
                 return 1;
             }, IntPtr.Zero, 1), "Enumerate connected game controllers");
         return connected;

@@ -1,5 +1,7 @@
 'use strict';
 
+const { stickHand, isFalconPedals } = require('../rig/device-identity.mjs');
+
 // A game slot is an ordinal. Only a nonempty product record unique in both files
 // identifies a joystick across a reorder; a hand label or the same slot alone cannot.
 function productIndex(profile) {
@@ -10,12 +12,14 @@ function productIndex(profile) {
     if (tag !== 'options' || attrs.type !== 'joystick') continue;
     const slot = Number(attrs.instance);
     if (!Number.isInteger(slot) || slot < 1) continue;
-    const key = (attrs.Product || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const product = (attrs.Product || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    // A manually created pedal layout knows the model but may lack its Windows GUID.
+    const falcon = isFalconPedals(product);
+    const key = falcon ? 'virpil:r1-falcon' : product;
     counts.set(key, (counts.get(key) || 0) + 1);
     const hasGuid = /\{[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\}/.test(key);
-    const namedVkbHand = /vkb/.test(key) && /\b(?:lh?|rh?|left|right)\b/.test(key.split('{')[0]);
     if (seenSlots.has(slot)) bySlot.delete(slot);
-    else if (hasGuid || namedVkbHand) bySlot.set(slot, key);
+    else if (hasGuid || falcon || stickHand(key) !== 'unknown') bySlot.set(slot, key);
     seenSlots.add(slot);
   }
   return { bySlot, counts };
@@ -77,8 +81,16 @@ function intersection(left, right) {
   return matches;
 }
 
-function modifierState(profile, own, other) {
+function modifierState(profile, own, other, slots, bindings) {
   let resolved = true;
+  const referenced = new Set();
+  if (slots) {
+    for (const row of bindings) {
+      for (const value of [row.input, ...Object.values(row.inputAttributes || {})]) {
+        for (const token of value.toLowerCase().split(/[^\w]+/)) referenced.add(token);
+      }
+    }
+  }
   function normalize(node) {
     const attrs = Object.keys(node.attrs).sort().map(key => {
       const value = comparableValue(node.attrs[key], own, other, true);
@@ -87,13 +99,35 @@ function modifierState(profile, own, other) {
     });
     return [node.tag, attrs, node.children.map(normalize)];
   }
-  const declarations = profile.children.filter(n => n.tag === 'modifiers' && (n.children.length || Object.keys(n.attrs).length));
+  const declarations = profile.children.filter(n => n.tag === 'modifiers').map(n => {
+    if (!slots) return n;
+    const children = n.children.filter(row => {
+      const input = row.attrs.input?.toLowerCase();
+      if (!input) return true;
+      const match = /^js(\d+)_/.exec(input);
+      if (match && slots.has(Number(match[1]))) return true;
+      const shared = /^(?:kb|mo|gp)\d+_(.+)/.exec(input)?.[1];
+      return referenced.has(input) || (shared && referenced.has(shared));
+    });
+    return { ...n, children };
+  }).filter(n => n.children.length || Object.keys(n.attrs).length);
   const shape = JSON.stringify(declarations.map(normalize));
   return resolved ? shape : null;
 }
 
-function compareJoysticks(expected, active, expectedProfile, activeProfile) {
+function compareJoysticks(expected, active, expectedProfile, activeProfile, selected) {
   const expectIds = productIndex(expectedProfile), activeIds = productIndex(activeProfile);
+  // Portable layouts identify a logical hand and family without inventing a
+  // hardware ID. Scoped Apply resolves these to the recipient's actual sticks.
+  // Use that same verified route when the active product record is unique.
+  for (const [savedSlot, activeSlot] of selected?.routes || []) {
+    const saved = expected.devices.get(savedSlot);
+    const key = activeIds.bySlot.get(activeSlot);
+    if (saved && !saved.product && key && activeIds.counts.get(key) === 1) {
+      expectIds.bySlot.set(savedSlot, key);
+      expectIds.counts.set(key, (expectIds.counts.get(key) || 0) + 1);
+    }
+  }
   const left = groupsFor(expected, expectIds, activeIds), right = groupsFor(active, activeIds, expectIds);
   let matchedCount = 0, differenceCount = 0, uncertain = false;
   const differences = [];
@@ -122,8 +156,8 @@ function compareJoysticks(expected, active, expectedProfile, activeProfile) {
     return { ...result, status: 'different', message: description + ' in the active profile on disk.' };
   }
   if (uncertain) return { ...result, status: 'inconclusive', message: 'The two files do not identify every assigned joystick uniquely. A physical device match is still unconfirmed.' };
-  const exportModifiers = modifierState(expectedProfile, expectIds, activeIds);
-  const activeModifiers = modifierState(activeProfile, activeIds, expectIds);
+  const exportModifiers = modifierState(expectedProfile, expectIds, activeIds, selected?.saved, expected.bindings);
+  const activeModifiers = modifierState(activeProfile, activeIds, expectIds, selected?.active, active.bindings);
   if (exportModifiers === null || activeModifiers === null || exportModifiers !== activeModifiers) {
     return { ...result, status: 'inconclusive', message: 'The joystick inputs agree. The modifier definitions could not be matched.' };
   }

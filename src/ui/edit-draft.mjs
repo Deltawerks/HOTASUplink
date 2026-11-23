@@ -1,15 +1,12 @@
+import { normalizeActivationMode } from './binding-gesture.mjs';
+import { falconPedalName, isFalconPedals, stickFamily, stickHand } from '../rig/device-identity.mjs';
+import { isPedalToeAxis } from './bindings.mjs';
+
 const hands = new Set(['left', 'right']);
 const validSlot = value => Number.isInteger(value) && value >= 1 && value <= 8;
 
 export function actionKey({ context, action }) {
   return encodeURIComponent(context) + '/' + encodeURIComponent(action);
-}
-
-function controllerHand(name) {
-  if (!/VKB/i.test(name || '')) return null;
-  if (/\b(?:L|LH|left)\b/i.test(name)) return 'left';
-  if (/\b(?:R|RH|right)\b/i.test(name)) return 'right';
-  return null;
 }
 
 function controlInput(raw) {
@@ -28,6 +25,30 @@ function slotOptions(profile) {
   });
 }
 
+function pedalTarget(result, control, profile, slots, capture) {
+  const saved = profile?.devices || [];
+  const candidates = saved.filter(d => isFalconPedals(d) && validSlot(d.slot));
+  const chosen = slots.pedals || (candidates.length === 1 ? candidates[0].slot : null);
+  const slot = Number(chosen);
+  const recorded = saved.find(d => d.slot === slot);
+  const fail = (reason, extra) => ({ ...result, slotKey: 'pedals', reason, ...extra });
+  if (!validSlot(slot) || (recorded?.product && !isFalconPedals(recorded)) ||
+      hands.has(recorded?.device) || [slots.left, slots.right].some(stick => Number(stick) === slot)) {
+    return fail('Choose a separate game joystick slot for the R1-FALCON pedals.', { needsSlot: true });
+  }
+  const isToe = control.key === 'left-toe' || control.key === 'right-toe';
+  const input = controlInput(capture ? capture.raw : isToe ? control.reportedInput : control.key);
+  if ((capture && capture.host !== 'pedals') || (isToe && (!isPedalToeAxis(input) || input === control.otherToeInput))) {
+    return fail('Capture this toe brake by moving it on its own.', { slot, needsCapture: true });
+  }
+  if (!input || (!isToe && capture && input !== control.key)) {
+    return fail('Move this pedal axis to capture its input.', { slot, needsCapture: true });
+  }
+  return { ...result, ok: true, host: 'pedals', slotKey: 'pedals', slot, input, assignedRows: control.rows || [],
+    reason: 'Pedals · js' + slot + '_' + input + '.',
+    deviceRecord: { slot, device: 'pedals', product: recorded?.product || falconPedalName } };
+}
+
 /** Resolve a physical control against *game* slots. Windows enumeration order
  * and the SEM's visual mounting position are never game slot identifiers. */
 export function resolveTarget({ control, profile, hardware = [], slots = {}, capture = null }) {
@@ -36,40 +57,50 @@ export function resolveTarget({ control, profile, hardware = [], slots = {}, cap
     input: null, slot: null, reason: '', needsSlot: false, needsCapture: false,
     slotOptions: slotOptions(profile), deviceRecord: null };
   const fail = (reason, extra = {}) => ({ ...result, reason, ...extra });
-  if (!hands.has(device) && device !== 'sem') return fail('Choose a control on the left stick, right stick, or SEM.');
-  if (control.group === 'inactive' || control.group === 'unmapped') return fail('Choose a configured physical control on the model.');
+  if (!control || control.group === 'inactive' || control.group === 'unmapped') return fail('Choose a configured physical control on the model.');
   const armed = capture?.controlId === (control.id || device + ':' + control.key) ? capture : null;
+  if (device === 'pedals') return pedalTarget(result, control, profile, slots, armed);
+  if (!hands.has(device) && device !== 'sem') return fail('Choose a configured physical control.');
   let input = controlInput(armed ? armed.raw : control.key);
   if (armed && (!input || (control.needsCapture && (control.kind === 'axis') !== !/^(?:hat|button)/.test(input)))) {
     return fail(control.kind === 'axis' ? 'Move this axis to capture its reported input.' : 'Press this control to capture its reported button.', { needsCapture: true });
   }
   result.input = input;
   const saved = profile?.devices || [];
-  const currentSem = hardware.filter(d => controllerHand(d.name) && /\bSEM\b/i.test(d.name));
-  const priorSem = saved.filter(d => hands.has(d.device) && /\bSEM\b/i.test(d.product));
+  const family = control.family || 'vkb';
+  const matchingHardware = hardware.filter(d => stickFamily(d) === family);
+  const currentSem = matchingHardware.filter(d => /\bSEM\b/i.test(d.name));
+  const priorSem = saved.filter(d => stickFamily(d) === family && hands.has(d.device) && /\bSEM\b/i.test(d.product));
   let host = device;
   let reported = null;
   if (device === 'sem') {
-    if (armed && (!hands.has(armed.host) || (currentSem.length && !currentSem.some(d => controllerHand(d.name) === armed.host)))) {
+    if (armed && (!hands.has(armed.host) || (currentSem.length && !currentSem.some(d => stickHand(d) === armed.host)))) {
       return fail('The captured input does not match a connected SEM host. Capture this control again.', { needsCapture: true });
     }
     if (armed) host = armed.host;
-    else if (currentSem.length === 1) host = controllerHand(currentSem[0].name);
-    // An offline saved SEM location may predate a move. Only use the old
-    // slot after a deliberate choice when there is no current reporting host.
-    if (hands.has(host)) reported = currentSem.find(d => controllerHand(d.name) === host);
+    else if (currentSem.length === 1 && hands.has(stickHand(currentSem[0]))) host = stickHand(currentSem[0]);
+    if (hands.has(host)) reported = currentSem.find(d => stickHand(d) === host);
   } else {
     if (armed && (armed.host !== host || input !== controlInput(control.key))) {
       return fail('The captured input differs from this stick control. Select its reported control or capture again.', { needsCapture: true });
     }
-    const matching = hardware.filter(d => controllerHand(d.name) === host);
+    const matching = matchingHardware.filter(d => stickHand(d) === host);
     if (matching.length === 1) reported = matching[0];
   }
   result.host = host;
+  result.slotKey = host;
   const chosen = slots[host];
   const hasChoice = chosen !== undefined && chosen !== null && chosen !== '';
-  const candidates = hands.has(host) ? saved.filter(d => d.device === host && validSlot(d.slot)) : [];
-  const slot = hasChoice ? Number(chosen) : candidates.length === 1 ? candidates[0].slot : null;
+  const candidates = hands.has(host) ? saved.filter(d => stickFamily(d) === family && d.device === host && validSlot(d.slot)) : [];
+  let slot = hasChoice ? Number(chosen) : candidates.length === 1 ? candidates[0].slot : null;
+  // With no reporting SEM, an already mapped contact has a destination in the
+  // layout itself. An unbound contact or one spanning several slots still needs a choice.
+  if (!hasChoice && host === 'sem' && !currentSem.length && control.rows?.length) {
+    const savedSlot = control.rows[0].slot;
+    if (control.rows.every(row => row.slot === savedSlot) && saved.some(d => d.slot === savedSlot && hands.has(d.device))) {
+      slot = savedSlot;
+    }
+  }
   if (!validSlot(slot)) {
     if (hasChoice) return fail('Choose a supported game joystick slot from 1 through 8.', { needsSlot: true });
     const reason = host === 'sem'
@@ -78,18 +109,22 @@ export function resolveTarget({ control, profile, hardware = [], slots = {}, cap
     return fail(reason, { needsSlot: true, needsCapture: Boolean(control.needsCapture || host === 'sem') });
   }
   result.slot = slot;
+  if (Number(slots.pedals) === slot) return fail('This slot is assigned to the pedals. Choose a separate slot for the stick.', { needsSlot: true });
   if (hands.has(host) && Number(slots[host === 'left' ? 'right' : 'left']) === slot) {
     return fail('The two sticks need different game joystick slots.', { needsSlot: true });
   }
   const recorded = saved.find(d => d.slot === slot);
+  if (recorded && (recorded.product || hands.has(recorded.device)) && stickFamily(recorded) !== family) {
+    return fail('Joystick ' + slot + ' belongs to a different controller. Choose a slot for this stick.', { needsSlot: true });
+  }
   if (host === 'sem') {
     const confirmedHands = [...hands].filter(hand => Number(slots[hand]) === slot);
     if (confirmedHands.length === 1) host = confirmedHands[0];
     else if (hands.has(recorded?.device)) host = recorded.device;
   }
   result.host = host;
-  const savedHost = hands.has(recorded?.device) ? recorded.device : controllerHand(recorded?.product);
-  if (hands.has(host) && savedHost && savedHost !== host) {
+  const savedHost = hands.has(recorded?.device) ? recorded.device : stickHand(recorded);
+  if (hands.has(host) && hands.has(savedHost) && savedHost !== host) {
     return fail('Joystick ' + slot + ' belongs to the ' + savedHost + ' stick in this layout. Choose the game slot for the ' + host + ' stick.', { needsSlot: true });
   }
   if (device === 'sem' && !armed) {
@@ -105,9 +140,9 @@ export function resolveTarget({ control, profile, hardware = [], slots = {}, cap
     if (priorSem.length === 1 && priorSem[0].device !== host) evidence.push('The saved SEM was on the ' + priorSem[0].device + ' stick.');
   }
   evidence.push((hasChoice ? 'Selected' : 'Saved') + ' game slot · js' + slot + '_' + input + '.');
-  const product = reported?.name || (recorded?.device === host ? recorded?.product : '') || '';
-  return { ...result, ok: true, host, slot, input, reason: evidence.join(' '),
-    deviceRecord: hands.has(host) ? { slot, device: host, product } : null };
+  const product = recorded?.product || reported?.name || '';
+  return { ...result, ok: true, host, slot, input, assignedRows: control.rows || [], reason: evidence.join(' '),
+    deviceRecord: hands.has(host) ? { slot, device: host, product, ...(!product && family === 'virpil' ? { family } : {}) } : null };
 }
 
 const taps = row => Number(row?.multiTap) || 1;
@@ -129,11 +164,7 @@ function gestureName(multiTap, mode) {
 }
 
 function sameGesture(a, b) {
-  const mode = r => {
-    const s = activation(r).toLowerCase().replace(/[_ -]/g, '');
-    return ['', 'press', 'onpress'].includes(s) ? 'press' : s;
-  };
-  return taps(a) === taps(b) && mode(a) === mode(b);
+  return taps(a) === taps(b) && normalizeActivationMode(a.activationMode) === normalizeActivationMode(b.activationMode);
 }
 
 function removal(row) {
@@ -141,11 +172,11 @@ function removal(row) {
 }
 
 /** Preview against the current effective profile, including prior staged operations. */
-export function previewEdit({ profile, action, target, previous = null, mode = 'replace', gesture = {}, conflictPolicy }) {
+export function previewEdit({ profile, action, target, previous = null, mode = 'replace', gesture = {} }) {
   const bindings = profile?.bindings || [];
   const before = action ? bindings.filter(r => r.context === action.context && r.action === action.action) : [];
-  const preview = { ok: false, before, after: before, conflicts: [], otherContexts: [], shared: [],
-    needsPrevious: false, needsConflictChoice: false, edit: null, edits: [], reason: '' };
+  const preview = { ok: false, before, after: before, conflicts: [],
+    needsPrevious: false, edit: null, edits: [], reason: '' };
   const fail = (reason, flags) => ({ ...preview, reason, ...flags });
   if (!action?.context || !action?.action) return fail('Select a game action.');
   if (!['replace', 'add', 'remove'].includes(mode)) return fail('Choose how to edit this action.');
@@ -175,7 +206,7 @@ export function previewEdit({ profile, action, target, previous = null, mode = '
   if (!Number.isInteger(multiTap) || multiTap < 1 || (gesture?.multiTap != null && multiTap > 4) ||
       (requestedMode !== undefined && (typeof requestedMode !== 'string' || !/^\w{0,64}$/.test(requestedMode)))) return fail('The activation gesture is invalid.');
   const row = { ...(old || {}), action: action.action, context: action.context, label: action.label || old?.label || action.action,
-    contextLabel: action.contextLabel || old?.contextLabel || action.context, device: hands.has(target.host) ? target.host : 'unknown',
+    contextLabel: action.contextLabel || old?.contextLabel || action.context, device: hands.has(target.host) || target.host === 'pedals' ? target.host : 'unknown',
     slot: target.slot, input: target.input, multiTap, activationMode, gesture: gestureName(multiTap, activationMode), origin: 'draft' };
   delete row.physicalDevice;
   delete row.physicalKey;
@@ -184,30 +215,40 @@ export function previewEdit({ profile, action, target, previous = null, mode = '
     physical.physicalDevice = 'sem';
     if (target.physicalKey && target.physicalKey !== target.input) physical.physicalKey = target.physicalKey;
   }
-  Object.assign(row, physical);
-  if (before.some(sibling => sibling !== old && matchesPrevious(sibling, identity(row)))) return fail('This action already has that joystick binding.');
-  const occupied = bindings.filter(r => r.slot === row.slot && r.input === row.input && actionKey(r) !== actionKey(row));
-  preview.conflicts = occupied.filter(r => r.context === row.context && sameGesture(r, row));
-  preview.shared = occupied.filter(r => r.context === row.context && !sameGesture(r, row));
-  preview.otherContexts = occupied.filter(r => r.context !== row.context);
-  preview.after = old ? before.map(r => r === old ? row : r) : [...before, row];
-  if (preview.conflicts.length && !['keep', 'replace'].includes(conflictPolicy)) {
-    return fail('This input already has an action in this context. Keep both or replace the conflicting binding.', { needsConflictChoice: true });
+  if (target.physicalDevice === 'pedals' && ['left-toe', 'right-toe'].includes(target.physicalKey)) {
+    physical.physicalDevice = 'pedals';
+    physical.physicalKey = target.physicalKey;
   }
-  const clears = conflictPolicy === 'replace' ? preview.conflicts.map(removal) : [];
-  if (clears.some(clear => bindings.filter(r => actionKey(r) === actionKey(clear) && matchesPrevious(r, clear.previous)).length !== 1)) {
-    return fail('A conflicting binding cannot be uniquely identified. Keep it or choose another input.');
+  Object.assign(row, physical);
+  const atDestination = binding => binding.slot === row.slot && binding.input === row.input;
+  // A SEM contact can still have saved rows on its former host. The sheet
+  // identifies those physical rows independently of the new game slot.
+  const onControl = new Set(target.assignedRows);
+  preview.conflicts = bindings.filter(binding => (atDestination(binding) || onControl.has(binding)) &&
+    (binding.context !== action.context || binding.action !== action.action));
+  const clears = preview.conflicts.map(removal);
+  if (clears.some(clear => bindings.filter(r => r.context === clear.context && r.action === clear.action && matchesPrevious(r, clear.previous)).length !== 1)) {
+    return fail('Two identical bindings on this control cannot be distinguished.');
+  }
+  const explicitGesture = gesture?.multiTap != null || requestedMode !== undefined;
+  const alreadyBound = before.some(sibling => sibling !== old && atDestination(sibling) &&
+    ((!old && !explicitGesture) || sameGesture(sibling, row)));
+  if (alreadyBound) {
+    if (old) clears.push(removal(old));
+    if (!clears.length) return fail('This action already has that joystick binding.');
+    return { ...preview, ok: true, after: before.filter(r => r !== old), edits: clears };
   }
   const unchanged = old && matchesPrevious(old, identity(row)) &&
     (old.physicalDevice || null) === (row.physicalDevice || null) && (old.physicalKey || null) === (row.physicalKey || null);
   if (unchanged && !clears.length) return fail('This action is already assigned to that input and gesture.');
   const edit = { context: row.context, action: row.action, slot: row.slot, input: row.input, ...physical,
-    ...(hands.has(target.host) ? { device: target.host } : {}),
+    ...(hands.has(target.host) || target.host === 'pedals' ? { device: target.host } : {}),
     ...(old ? { previous: identity(old) } : mode === 'add' ? { mode: 'add' } : {}),
     ...(gesture?.multiTap != null ? { multiTap } : {}),
     ...(requestedMode !== undefined ? { activationMode: requestedMode } : {}),
     ui: { row, deviceRecord: target.deviceRecord } };
-  return { ...preview, ok: true, after: unchanged ? before : preview.after, edit, edits: unchanged ? clears : [...clears, edit] };
+  const after = old ? before.map(r => r === old ? row : r) : [...before, row];
+  return { ...preview, ok: true, after: unchanged ? before : after, edit: unchanged ? null : edit, edits: unchanged ? clears : [...clears, edit] };
 }
 
 export function stageEdit(edits, preview) {

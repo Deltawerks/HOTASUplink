@@ -23,11 +23,12 @@ export function actionNames(control, context = 'all') {
 }
 
 export function canLocate(control) {
-  return ['left', 'right', 'sem'].includes(control.device)
+  return ['left', 'right', 'sem', 'pedals'].includes(control.device)
     && !['unmapped', 'inactive'].includes(control.group);
 }
 
 function detailLabel(control, count) {
+  if (control.device === 'pedals') return control.label;
   const code = control.key.replace(/^button(\d+)$/, 'B$1').toUpperCase();
   const detail = control.label.split(' · ')[1] || '';
   const caption = detail.charAt(0).toUpperCase() + detail.slice(1);
@@ -100,6 +101,7 @@ function compactAction(row) {
 
 function describe(control, count, context, selected, editedIds, compact = false) {
   const rows = orderedActions(control, context);
+  const suggestion = !rows.length && control.suggestedAction;
   const actions = rows.map(row => ({
     name: actionName(row),
     context: row.contextLabel || row.context || '',
@@ -108,9 +110,12 @@ function describe(control, count, context, selected, editedIds, compact = false)
   }));
   const names = [...new Set(actions.map(action => action.name))];
   return { key: control.key, label: detailLabel(control, count), actions,
-    ...(compact ? { compactName: compactAction(rows[0]), controlLabel: control.label,
+    ...(compact ? { compactName: compactAction(rows[0]) || suggestion || (control.device === 'pedals' ? control.label : ''),
+      calloutNote: suggestion ? 'Suggested' : !rows.length && control.device === 'pedals' ? (control.needsCapture ? 'Identify axis' : 'Unassigned') : '',
+      controlLabel: control.label,
       direction: control.direction || (control.group === 'pov' && povAxes[control.key]) || '' } : {}),
-    text: names.join('\n') || (control.needsCapture ? 'Input number unverified' : 'Unassigned'),
+    text: names.join('\n') || (suggestion ? 'This starter suggests ' + suggestion + '. Identify this footplate in Settings → Toe brake axes to include the binding when you save.' :
+      control.needsCapture ? 'Input number unverified' : 'Unassigned'),
     active: control.id === selected, edited: Boolean(editedIds?.has(control.id)) };
 }
 
@@ -145,26 +150,33 @@ export function rigLabels(sheet, focus, selected, { reference = false, context =
     if (!groups.has(id)) groups.set(id, []);
     groups.get(id).push(control);
   }
-  const unitNames = { left: 'Left', right: 'Right', sem: 'SEM' };
-  const visible = [...groups.values()].filter(controls => !compact || controls.some(control => control.rows.length || control === current));
+  const unitNames = { left: 'Left', right: 'Right', sem: 'SEM', pedals: 'Pedals' };
+  const visible = [...groups.values()].filter(controls => !compact || controls[0].device === 'pedals' ||
+    controls.some(control => control.discoverable || control.rows.length || control === current));
   return visible.map(controls => {
     const { device, group } = controls[0];
     const chosen = controls.find(control => control.id === selected);
     const edited = controls.find(control => editedIds?.has(control.id));
     const representative = chosen || edited || firstAssigned(controls, context) || controls[0];
     const firstLabel = controls[0].label;
-    const hat = compact && device !== 'sem' && stickHats.has(group);
+    const hat = compact && device !== 'sem' && (stickHats.has(group) || controls.some(control => control.hat));
     const title = group === 'pov' ? 'A1 POV / ministick' : hat || controls.length > 1 ? firstLabel.split(' · ')[0] : firstLabel;
     const groupEntries = controls.map(control => describe(control, controls.length, context, selected, editedIds, compact));
     const item = groupEntries.find(entry => entry.key === representative.key);
     // A1's digital POV and analogue ministick share one physical cap. Show all
     // its directions and any bound axes; the detailed popup lists both modes.
-    const hatSlots = hat && groupEntries.filter(entry => entry.direction && (!povAxes[entry.key] || entry.actions.length));
+    const hatSlots = hat && groupEntries.filter(entry => entry.direction && (group !== 'pov' || !povAxes[entry.key] || entry.actions.length));
     return { ...item, device, group, groupTitle: title, groupEntries,
       ...(compact ? { compact: true, compactName: hat ? title : item.compactName || 'Unassigned' } : {}),
-      ...(hat ? { hatSlots } : {}),
+      ...(hat ? { hatSlots, editSlots: editing } : {}),
       deviceTitle: focus === 'all' ? unitNames[device] : '', reference,
-      referenceSide: reference && focus === 'all' ? (device === 'sem' ? placement : device) : undefined,
+      referenceSide: reference && focus === 'all' ? referenceRail(device, group, placement) : undefined,
       dimmed: Boolean(editing && !reference && !compact && current && current.device === focus && !chosen) };
   });
+}
+
+function referenceRail(device, group, placement) {
+  if (device === 'sem') return placement;
+  if (device === 'pedals') return group === 'left-toe' ? 'left' : 'right';
+  return device;
 }

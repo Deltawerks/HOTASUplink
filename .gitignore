@@ -12,11 +12,14 @@ output/
 /models/
 /docs/project-brief.md
 
-# Only the three finished, textured device models ship with the viewer.
+# Only finished controller models ship with the viewer.
 /assets/rig/*
 !/assets/rig/left.glb
 !/assets/rig/right.glb
 !/assets/rig/sem.glb
+!/assets/rig/virpil-alpha-prime-left.glb
+!/assets/rig/virpil-alpha-prime-right.glb
+!/assets/rig/virpil-r1-falcon-pedals.glb
 
 # The game supplies its own data and profiles at runtime.
 *.p4k

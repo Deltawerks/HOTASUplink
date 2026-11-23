@@ -17,6 +17,36 @@ const binding = (input, attrs = {}) => ({ ...action, device: 'left', slot: 2, in
 const ctrl = (device, key, detail = {}) => ({ device, key, id: device + ':' + key, group: 'a2', kind: 'button', ...detail });
 const target = (control, attributes = {}) => resolveTarget({ profile: profile(), hardware, control, ...attributes });
 
+test('VIRPIL edits route through the matching family and hand even when a VKB or pedals use another slot', () => {
+  const control = ctrl('right', 'button7', { family: 'virpil' });
+  const records = [...devices, { slot: 3, device: 'unknown', product: 'VPC R1-FALCON Pedals' },
+    { slot: 4, device: 'right', product: 'RIGHT VPC Stick MT-50CM3' }];
+  const snapshot = profile([], records);
+  assert.equal(target(control, { profile: snapshot }).slot, 4);
+  for (const wrong of [1, 2, 3]) {
+    assert.equal(target(control, { profile: snapshot, slots: { right: wrong } }).ok, false);
+  }
+  const offline = target(control, { profile: profile([], []), slots: { right: 1 } });
+  assert.deepEqual(offline.deviceRecord, { slot: 1, device: 'right', product: '', family: 'virpil' });
+});
+
+test('a Falcon pedal edit uses a separate slot and captures only an eligible toe axis', () => {
+  const record = { slot: 3, device: 'pedals', product: 'VPC R1-FALCON Pedals' };
+  const toe = ctrl('pedals', 'left-toe', { family: 'virpil', group: 'left-toe', kind: 'axis', otherToeInput: 'y' });
+  const snapshot = profile([], [...devices, record]);
+  const observed = (host, raw, extra = {}) => target(toe, { profile: snapshot, ...extra, capture: { controlId: toe.id, host, raw } });
+  assert.ok(target(toe, { profile: snapshot }).needsCapture);
+  assert.ok(observed('left', 'x').needsCapture);
+  for (const axis of ['z', 'y', 'button1']) assert.ok(observed('pedals', axis).needsCapture);
+  assert.ok(observed('pedals', 'x', { slots: { pedals: 2 } }).needsSlot);
+  assert.equal(observed('pedals', 'x').input, 'x');
+  const offline = observed('pedals', 'x', { slots: { pedals: 3 }, profile: profile([], []) });
+  assert.deepEqual(offline.deviceRecord, record);
+  assert.ok(observed('pedals', 'x', { slots: { pedals: 3, right: 3 }, profile: profile([], []) }).needsSlot);
+  const duplicate = profile([], [...snapshot.devices, { ...record, slot: 4 }]);
+  assert.ok(observed('pedals', 'x', { profile: duplicate }).needsSlot);
+});
+
 test('each base wheel keeps its own Z route and neither slider takes its assignment', () => {
   for (const [id, hand, slot] of [['A', 'left', 2], ['B', 'right', 1]]) {
     const wheel = ctrl(hand, 'z', { kind: 'axis', group: 'throttle' });
@@ -45,6 +75,25 @@ test('current right-hand SEM routes to the saved right game slot, independent of
   assert.ok(offline.needsSlot);
   assert.equal(offline.host, 'sem');
   assert.equal(target(button, { hardware: [], slots: { sem: 2 } }).host, 'left');
+});
+
+test('a mapped offline SEM contact reuses its layout slot, while capture and a slot choice take precedence', () => {
+  const contact = ctrl('sem', 'button57', { rows: [binding('button57'), binding('button57', { context: 'ground' })] });
+  const read = (attributes = {}) => target(contact, { hardware: [], ...attributes });
+  assert.deepEqual([read().slot, read().input, read().slotKey, read().host], [2, 'button57', 'sem', 'left']);
+  assert.equal(read({ slots: { sem: 1 } }).slot, 1);
+  assert.equal(read({ capture: { controlId: contact.id, host: 'right', raw: 'button59' } }).input, 'button59');
+  assert.equal(read({ hardware }).slot, 1);
+  const ambiguous = { ...contact, rows: [...contact.rows, binding('button57', { slot: 1 })] };
+  assert.equal(target(ambiguous, { hardware: [] }).needsSlot, true);
+});
+
+test('an alternate cannot duplicate a press on the same button using a different spelling', () => {
+  const to = target(ctrl('left', 'button4'));
+  const base = profile([binding('button4', { activationMode: 'onPress' })]);
+  const preview = previewEdit({ profile: base, action, target: to, mode: 'add' });
+  assert.equal(preview.ok, false);
+  assert.match(preview.reason, /already has/);
 });
 
 test('blank and ambiguous layouts offer explicit slots without inferring Windows enumeration order', () => {
@@ -142,7 +191,7 @@ test('an action with multiple alternatives requires a choice and preserves gestu
   assert.equal(previewEdit({ profile: duplicated, action, target: to, previous: old }).ok, false);
 });
 
-test('conflict replacement clears just the matching alternative; distinct gestures and contexts survive', () => {
+test('assignment clears other commands on that input across gestures and contexts and preserves their alternatives', () => {
   const old = binding('button27', { origin: 'default' });
   const collision = binding('button3', { slot: 1, device: 'right', action: 'modes', label: 'Cycle mode' });
   const itsAlternate = { ...collision, input: 'button7' };
@@ -151,20 +200,58 @@ test('conflict replacement clears just the matching alternative; distinct gestur
   const distant = { ...collision, context: 'mining' };
   const source = profile([old, collision, itsAlternate, held, double, distant]);
   const to = target(ctrl('right', 'button3'));
-  const inspect = policy => previewEdit({ profile: source, action, target: to, conflictPolicy: policy });
-  assert.ok(inspect().needsConflictChoice);
-  assert.deepEqual(inspect().conflicts, [collision]);
-  assert.deepEqual(inspect().shared, [held, double]);
-  assert.deepEqual(inspect().otherContexts, [distant]);
-  assert.equal(inspect('keep').edits.length, 1);
-  const staged = stageEdit([], inspect('replace'));
-  assert.equal(staged.length, 2);
-  assert.equal(staged[0].input, null);
-  assert.ok(!Object.hasOwn(saveEdits(staged)[1], 'ui'));
+  const update = previewEdit({ profile: source, action, target: to, mode: 'add' });
+  assert.deepEqual(update.conflicts, [collision, held, double, distant]);
+  const staged = stageEdit([], update);
+  assert.equal(staged.length, 5);
+  assert.ok(saveEdits(staged).every(edit => !Object.hasOwn(edit, 'ui')));
   const next = applyDraft(source, staged);
-  assert.ok(!next.bindings.includes(collision));
-  for (const survivor of [itsAlternate, held, double, distant]) assert.ok(next.bindings.includes(survivor));
+  assert.deepEqual(next.bindings, [old, itsAlternate, update.edit.ui.row]);
   assert.equal(source.bindings.length, 6);
+});
+
+test('reassigning Request Landing repairs a double-bound C1 without duplicating it or changing B42', () => {
+  const b42 = binding('button42');
+  const c1Tap = binding('button57');
+  const c1Double = binding('button57', { action: 'autoland', multiTap: 2 });
+  const autoElsewhere = { ...c1Double, input: 'button9' };
+  const source = profile([b42, c1Double, c1Tap, autoElsewhere]);
+  const c1 = ctrl('sem', 'button57', { rows: [c1Tap, c1Double] });
+  const to = target(c1, { profile: source, hardware: [] });
+  const fix = previewEdit({ profile: source, action, target: to, mode: 'add' });
+  assert.deepEqual(fix.conflicts, [c1Double]);
+  assert.deepEqual(fix.after, [b42, c1Tap]);
+  assert.equal(fix.edits.length, 1);
+  assert.equal(fix.edits[0].previous.multiTap, 2);
+  const repaired = applyDraft(source, stageEdit([], fix));
+  assert.deepEqual(repaired.bindings, [b42, c1Tap, autoElsewhere]);
+  assert.equal(previewEdit({ profile: repaired, action, target: to, mode: 'add' }).ok, false);
+  const merge = previewEdit({ profile: source, action, target: to, previous: b42 });
+  assert.deepEqual(applyDraft(source, stageEdit([], merge)).bindings, [c1Tap, autoElsewhere]);
+});
+
+test('replacing a SEM assignment clears its previous host while preserving unrelated buttons with the same number', () => {
+  const b42 = binding('button42');
+  const oldHost = binding('button57', { action: 'autoland', multiTap: 2 });
+  const unrelated = { ...oldHost, slot: 3, device: 'unknown' };
+  const source = profile([b42, oldHost, unrelated]);
+  const c1 = ctrl('sem', 'button57', { rows: [oldHost] });
+  const to = target(c1, { profile: source, hardware });
+  assert.equal(to.slot, 1);
+  const update = previewEdit({ profile: source, action, target: to, mode: 'add' });
+  assert.deepEqual(update.conflicts, [oldHost]);
+  const updated = applyDraft(source, stageEdit([], update));
+  assert.deepEqual(updated.bindings, [b42, unrelated, update.edit.ui.row]);
+  assert.equal(updated.bindings.at(-1).slot, 1);
+});
+
+test('keeping an already-bound action preserves its saved hold even when the catalog default is a tap', () => {
+  const saved = binding('button3', { activationMode: 'hold', gesture: 'Hold' });
+  const displaced = binding('button3', { action: 'autoland', multiTap: 2 });
+  const source = profile([saved, displaced]);
+  const preview = previewEdit({ profile: source, action, target: target(ctrl('left', 'button3')), mode: 'add' });
+  assert.deepEqual(preview.after, [saved]);
+  assert.deepEqual(applyDraft(source, stageEdit([], preview)).bindings, [saved]);
 });
 
 test('staged edits target the effective row, can clear the final alternative, and leave homonymous actions alone', () => {

@@ -55,7 +55,8 @@ export function createNextLaunch({ bridge, isEditing, onRestored }) {
     summary.textContent = restore ? 'Restore this installation’s active profile from its backup?'
       : 'Use “' + saved.name + '” for the next Star Citizen launch?';
     detail.textContent = restore ? 'This restores the full control profile, replacing control changes made since the backup.'
-      : 'HOTAS Uplink will back up the active profile before updating the joystick bindings.';
+      : 'HOTAS Uplink will back up the active profile, then update bindings for ' +
+        (saved.setupName || 'your controllers') + (saved.scope?.pedals ? ' and the rudder pedals.' : '.');
     status.textContent = 'Checking the game and active profile…';
     confirm.textContent = restore ? 'Restore bindings' : 'Apply preset';
     confirm.hidden = false;
@@ -102,7 +103,7 @@ export function createNextLaunch({ bridge, isEditing, onRestored }) {
     try {
       const result = restore
         ? await bridge.restorePreviousBindings({ ...expected, backupId: request.backup.id })
-        : await bridge.applyNextLaunch({ ...expected, source: saved.sourceId, expectedRevision: saved.revision });
+        : await bridge.applyNextLaunch({ ...expected, source: saved.sourceId, expectedRevision: saved.revision, scope: saved.scope });
       title.textContent = restore ? 'Bindings restored' : 'Ready for next launch';
       summary.textContent = restore ? 'The backed-up active profile is in place.'
         : (result.changed ? 'Applied “' + saved.name + '”.' : 'The active bindings already match “' + saved.name + '”.');

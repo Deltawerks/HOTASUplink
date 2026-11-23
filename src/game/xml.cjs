@@ -155,7 +155,7 @@ function writeNode(node, depth = 0) {
   }
   body += hasOldBody ? text.slice(cursor, xml.closeStart) : newline + ' '.repeat(depth);
   if (node.provenanceComment !== undefined) {
-    body = body.replace(/<!-- (?:HOTAS UPLINK|VKBTOOL) (?:SEM v1 [0-9a-f]{64}(?: [\w-]+)?|HOST v1 \d+ (?:left|right)) -->/g, '') + node.provenanceComment;
+    body = body.replace(/<!-- (?:HOTAS UPLINK|VKBTOOL) (?:SEM v1 [0-9a-f]{64}(?: [\w-]+)?|PEDALS v1 [0-9a-f]{64} (?:left-toe|right-toe)|HOST v1 \d+ (?:left|right)(?: virpil)?) -->/g, '') + node.provenanceComment;
   }
   return open.replace(/\s*\/>$/, '>') + body + after;
 }

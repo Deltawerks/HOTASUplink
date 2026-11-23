@@ -1,4 +1,5 @@
 import { createMonitorHistory } from './monitor-history.mjs';
+import { isFalconPedals, stickFamily, stickHand } from '../rig/device-identity.mjs';
 
 const byId = (id) => document.getElementById(id);
 
@@ -18,9 +19,10 @@ function savedDeviceFor(device, profile) {
     const usb = usbId(entry);
     return usb && usb[0].toUpperCase() === product && usb[1].toUpperCase() === vendor;
   });
-  const side = /\b(?:L|LH|left)\b/i.test(device.name) ? 'left'
-    : /\b(?:R|RH|right)\b/i.test(device.name) ? 'right' : '';
-  const candidates = exact.length ? exact : saved.filter((entry) => side && entry.device === side);
+  const side = stickHand(device);
+  const family = stickFamily(device);
+  const candidates = exact.length ? exact : isFalconPedals(device) ? saved.filter(isFalconPedals)
+    : saved.filter((entry) => side !== 'unknown' && entry.device === side && stickFamily(entry) === family);
   if (candidates.length !== 1) return null;
   const entry = candidates[0];
   const usb = usbId(entry);
@@ -51,7 +53,8 @@ function renderCards(container, devices, profile) {
     card.append(element('p', 'physical', 'USB ' + device.vid + ' / ' + device.pid));
     const details = element('details', 'monitor-device-details');
     details.append(element('summary', '', 'Device identity'), element('p', 'monitor-id', device.id));
-    const saved = savedDeviceFor(device, profile);
+    const ambiguousPedals = isFalconPedals(device) && devices.some(other => other.id !== device.id && isFalconPedals(other));
+    const saved = ambiguousPedals ? null : savedDeviceFor(device, profile);
     if (saved) {
       const label = 'Saved JS' + saved.slot + ' · ' + (saved.name || 'Joystick');
       details.append(element('p', '', label + (saved.pid ? ' · USB ' + saved.vid + ' / ' + saved.pid : '')));
@@ -131,6 +134,10 @@ function makeDialCheck(page) {
   observer.observe(page, { attributes: true, attributeFilter: ['hidden'] });
   return {
     cancelPending,
+    setVisible(visible) {
+      panel.hidden = !visible;
+      if (!visible) { panel.open = false; cancelPending(); }
+    },
     setDevices(next) {
       const current = selector.value;
       devices = next;
@@ -219,8 +226,9 @@ export function createMonitor() {
     setDevices(next) {
       devices = Array.isArray(next) ? next : [];
       renderCards(cards, devices, profile);
-      dial.setDevices(devices);
+      dial.setDevices(devices.filter(device => stickFamily(device) === 'vkb'));
     },
+    setShowSem(visible) { dial.setVisible(visible); },
     setStatus(next) {
       status.textContent = typeof next === 'string' ? next : next?.message || '';
       status.dataset.level = next?.level || 'info';

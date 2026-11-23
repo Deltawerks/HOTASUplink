@@ -202,5 +202,5 @@ export function createLabelGeometry() {
     normal.copy(marker.userData.surfaceNormal || marker.userData.facing).transformDirection(marker.parent.matrixWorld);
     return projectSurfaceHeading(position, normal, camera, width, height);
   }
-  return { prepare, direction, coverage };
+  return { prepare, direction, coverage, clear() { previous = []; width = 0; } };
 }

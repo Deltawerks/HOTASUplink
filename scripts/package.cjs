@@ -131,7 +131,7 @@ async function populate(destination, publicBuild) {
   const check = [
     "import 'three/addons/controls/OrbitControls.js';",
     "import 'three/addons/loaders/GLTFLoader.js';",
-    "import './src/rig/schematic.js';",
+    "import './src/rig/profiles.mjs';",
     "import './src/game/profile.cjs';",
     "console.log(JSON.stringify([process.versions.electron, process.arch]));",
   ].join('\n');

@@ -52,6 +52,8 @@
 .editor-binding-list, .editor-changes { list-style: none; padding: 0; margin: 7px 0 0; }
 .editor-binding-list:empty { margin: 0; }
 .editor-binding-list { max-height: 9em; overflow-y: auto; }
+.editor-binding-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.editor-binding-list .editor-secondary { flex: none; padding: 3px 8px; }
 .editor-binding-list li, .editor-changes li { padding: 5px 0; overflow-wrap: anywhere; }
 .editor-binding-list li + li, .editor-changes li + li { border-top: 1px solid var(--soft-edge); }
 .editor-binding-list strong, .editor-changes strong, .editor-preview > strong { display: block; font: 550 var(--type-body)/1.35 var(--body); }
@@ -83,10 +85,6 @@
 .editor-routing-field { display: block; margin-top: 7px; }
 .editor-routing-field select { display: block; margin-top: 3px; padding-block: 5px; }
 .editor-routing .editor-secondary { margin-top: 7px; }
-.editor-conflicts { margin: 8px 0 0; padding: 5px 8px; border: 1px solid var(--edge); border-radius: 3px; min-width: 0; }
-.editor-conflicts legend { color: var(--warn); font-size: var(--type-label); }
-.editor-conflicts label { display: flex; gap: 6px; align-items: center; margin: 5px 0; font: var(--type-label)/1.4 var(--body); overflow-wrap: anywhere; }
-.editor-conflicts input { margin: 0; accent-color: var(--blue); }
 .editor-preview .editor-warning, .editor-form-error { color: var(--warn); }
 .editor-primary, .editor-secondary {
   padding: 6px 10px; color: var(--txt); background: #162f4a;

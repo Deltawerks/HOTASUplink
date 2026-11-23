@@ -25,7 +25,7 @@ function startInput(onEvent) {
 
   async function run() {
     if (process.platform !== 'win32') {
-      status('warning', 'Live VKB input requires Windows.');
+      status('warning', 'Live controller input requires Windows.');
       return;
     }
 
@@ -97,7 +97,7 @@ module.exports = { startInput, readerCompiler };
 // Report connected devices and readable capabilities without requiring a button press.
 if (require.main === module) {
   const deadline = setTimeout(() => {
-    console.error('Timed out waiting for a VKB device snapshot.');
+    console.error('Timed out waiting for a controller snapshot.');
     process.exitCode = 1;
     stop();
   }, 15000);

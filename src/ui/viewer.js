@@ -1,6 +1,7 @@
 import { createRig } from '../rig/index.js';
 import { defaultRig, rigForId, rigProfiles } from '../rig/profiles.mjs';
-import { buildSheet, isWheelAxis, liveHand, physicalInput } from './bindings.mjs';
+import { stickFamily } from '../rig/device-identity.mjs';
+import { buildSheet, isPedalToeAxis, isWheelAxis, liveHand, physicalInput } from './bindings.mjs';
 import { actionNames, canLocate, orderedActions, rigLabels } from './rig-labels.mjs';
 import { createMonitor } from './monitor.js';
 import { addIcons } from './icons.js';
@@ -18,11 +19,26 @@ const blank = () => ({
   diagnostics: [],
 });
 const textSizeRange = { min: 80, max: 160, step: 5 };
-const defaults = { rigId: defaultRig.id, placement: 'off', flaps: '2', gear: '2', textSize: 100 };
+const defaults = { rigId: defaultRig.id, placement: 'off', flaps: '2', gear: '2', textSize: 100, pedalVisibility: {}, pedalAxesByRig: {} };
 let setup = { ...defaults };
 try {
   const saved = JSON.parse(localStorage.getItem('rig-setup') || '{}');
   setup.rigId = rigForId(saved.rigId).id;
+  setup.controllerChosen = saved.controllerChosen === true && setup.rigId === saved.rigId;
+  for (const rig of rigProfiles) {
+    if (rig.devices.pedals && typeof saved.pedalVisibility?.[rig.id] === 'boolean')
+      setup.pedalVisibility[rig.id] = saved.pedalVisibility[rig.id];
+    else if (Array.isArray(saved.enabledPedalRigs) && saved.enabledPedalRigs.includes(rig.id))
+      setup.pedalVisibility[rig.id] = true;
+    const savedAxes = saved.pedalAxesByRig?.[rig.id];
+    if (!rig.devices.pedals || !savedAxes) continue;
+    const axes = {};
+    for (const toe of ['left-toe', 'right-toe']) {
+      if (typeof savedAxes[toe] === 'string' && isPedalToeAxis(savedAxes[toe]) && !Object.values(axes).includes(savedAxes[toe]))
+        axes[toe] = savedAxes[toe];
+    }
+    setup.pedalAxesByRig[rig.id] = axes;
+  }
   for (const [key, choices] of Object.entries({
     placement: ['left', 'right', 'off'],
     flaps: ['2', '3', '4', 'axis'],
@@ -42,10 +58,26 @@ try {
 }
 document.documentElement.style.setProperty('--text-scale', String(setup.textSize / 100));
 let controllerSetup = rigForId(setup.rigId);
+function pedalsEnabled(data = profile) {
+  const pedals = controllerSetup.devices.pedals;
+  if (!pedals) return false;
+  return setup.pedalVisibility[controllerSetup.id] ??
+    (data.source.kind === 'starter' || data.devices.some(pedals.matches) || hardware.some(pedals.matches));
+}
+function currentSheet(source) {
+  return buildSheet(source, controllerSetup.controlsByDevice, { ...setup, pedalsEnabled: pedalsEnabled(source),
+    pedalAxes: setup.pedalAxesByRig[controllerSetup.id] }, controllerSetup.family);
+}
+function matchesSetupDevice(device) {
+  return stickFamily(device) === controllerSetup.family || (pedalsEnabled() && controllerSetup.devices.pedals.matches(device));
+}
 
 let profile = blank(),
   livePath = '',
   sourceId = 'active',
+  layoutChoice = 'auto',
+  autoNotice = '',
+  needsGameFolder = false,
   page = 'rig';
 let sheet = [],
   hardware = [],
@@ -63,7 +95,7 @@ let compatibilityMode = false;
 let controlById = new Map(), learnedControls = new Map(), slotByHost = new Map();
 const heldButtons = new Map();
 const wheelPositions = new Map();
-let wheelSetup = null;
+let axisIdentifiers = [];
 const activeInputs = new Set();
 const monitor = createMonitor();
 const nextLaunch = createNextLaunch({
@@ -74,7 +106,7 @@ const nextLaunch = createNextLaunch({
     await load('active');
   },
 });
-const handoff = createGameHandoff((id, revision) => window.viewer.verifyLayout(id, revision), nextLaunch);
+const handoff = createGameHandoff((id, revision, scope) => window.viewer.verifyLayout(id, revision, scope), nextLaunch);
 let reference = false, returnToEdit = null, labelContext = 'flying', buttonLabels = true;
 let editedIds = new Set();
 try {
@@ -85,8 +117,9 @@ try {
 } catch {}
 const editSession = createEditSession({
   context: () => ({
-    profile, sheet, sourceSheet: () => buildSheet(profile, controllerSetup.controlsByDevice, setup),
-    hardware, sourceId, livePath, loading, sourceName: sourceName(),
+    profile, sheet, sourceSheet: () => currentSheet(profile),
+    hardware: hardware.filter(matchesSetupDevice),
+    sourceId: profile.source.kind === 'starter' ? profile.source.path : sourceId, livePath, loading, sourceName: sourceName(),
     control: sheet.find(item => item.id === selected) || null,
   }),
   redraw: rebuild,
@@ -139,11 +172,21 @@ function deviceName(id) {
   return controllerSetup.devices[id]?.name || (id === 'unknown' ? 'Other saved inputs' : id);
 }
 function focusOptions() {
-  return [['all', 'All'], ...Object.entries(controllerSetup.devices).map(([id, spec]) => [id, spec.focus])];
+  return [['all', 'All'], ...Object.entries(controllerSetup.devices)
+    .filter(([id]) => id !== 'pedals' || pedalsEnabled()).map(([id, spec]) => [id, spec.focus])];
 }
 function renderControllerSetup() {
   $('controller-setup').value = controllerSetup.id;
+  $('controller-setup').title = controllerSetup.name;
   $('module-controls').hidden = !controllerSetup.devices.sem;
+  $('pedal-controls').hidden = !controllerSetup.devices.pedals;
+  if (controllerSetup.devices.pedals) $('pedal-name').textContent = controllerSetup.devices.pedals.name;
+  for (const b of document.querySelectorAll('[data-pedals]')) {
+    const pressed = (b.dataset.pedals === 'on') === pedalsEnabled();
+    b.classList.toggle('selected', pressed);
+    b.setAttribute('aria-pressed', String(pressed));
+  }
+  monitor.setShowSem(Boolean(controllerSetup.devices.sem));
   $('camera-focus').replaceChildren(...focusOptions().map(([id, name]) => {
     const button = assignedButton(name, () => setFocus(id));
     button.dataset.focus = id;
@@ -151,6 +194,13 @@ function renderControllerSetup() {
     button.setAttribute('aria-pressed', String(id === focus));
     return button;
   }));
+}
+function syncPedalView() {
+  if (!controllerSetup.devices.pedals) return;
+  const enabled = pedalsEnabled();
+  if (!enabled && focus === 'pedals') setFocus('all');
+  rig?.setPedals(enabled);
+  renderControllerSetup();
 }
 function rememberSetup() {
   try {
@@ -207,25 +257,30 @@ function setNotice() {
     text = 'Choose your Star Citizen LIVE folder to load your bindings.';
   } else if (missing === 'active-profile') {
     text = 'This installation has no saved active profile. Save a binding in Star Citizen, then reload the profile here.';
+  } else if (autoNotice) {
+    text = autoNotice;
+  } else if (profile.source.kind === 'starter' && !profile.source.canSave) {
+    text = 'Choose your Star Citizen LIVE folder to save this starter as a game layout.';
   } else if (profile.diagnostics?.some((d) => /unavailable|failed|could not/i.test(d))) {
     text = 'Some game data could not be read. See Profile details.';
     level = 'warning';
-  } else if (liveSide && ['left', 'right'].includes(previousHost?.device) && previousHost.device !== liveSide) {
+  } else if (controllerSetup.devices.sem && liveSide && ['left', 'right'].includes(previousHost?.device) && previousHost.device !== liveSide) {
     text = `Saved SEM bindings use the ${previousHost.device} stick. Windows sees the SEM on the ${liveSide} stick.`;
     if (currentHost.readable !== false) text += ' Live input is available in Input monitor.';
   }
   const notice = $('notice');
   notice.dataset.level = level;
   $('notice-message').textContent = text;
-  $('notice-folder').hidden = !missing;
+  $('notice-folder').hidden = !missing && !needsGameFolder && !(profile.source.kind === 'starter' && !profile.source.canSave);
   notice.hidden = !text;
 }
 function rebuild() {
-  sheet = buildSheet(editSession.draft || profile, controllerSetup.controlsByDevice, setup);
+  sheet = currentSheet(editSession.draft || profile);
   controlById = new Map(sheet.map(item => [item.id, item]));
   slotByHost = new Map();
   for (const device of (editSession.draft || profile).devices) {
-    if (!slotByHost.has(device.device)) slotByHost.set(device.device, device.slot);
+    if (!matchesSetupDevice(device)) continue;
+    slotByHost.set(device.device, slotByHost.has(device.device) ? null : device.slot);
   }
   learnedControls = new Map();
   for (const item of sheet) for (const row of item.rows) {
@@ -259,6 +314,7 @@ function labelRig() {
     reference, compact, placement: setup.placement, context: labelContext, editing: editSession.active && !reference, editedIds,
   });
   $('button-labels-empty').hidden = !compact || items.length > 0 || loading || !sheet.length || !!sourceError;
+  $('use-automatic').hidden = layoutChoice === 'auto' || focus !== 'all' || editSession.active;
   rig?.setLabels(items);
 }
 function setRigControls() {
@@ -350,6 +406,7 @@ function matches(item) {
     item.key,
     item.label,
     item.group,
+    item.productName,
     deviceName(item.device),
     friendlyKey(item.key),
     ...item.rows.flatMap((r) => [
@@ -425,7 +482,9 @@ function renderBindings() {
     }
     let group = '';
     for (const item of items) {
-      const next = item.group || 'Controls';
+      const next = item.group === 'unmapped' && item.slot
+        ? ['JS' + item.slot, item.productName].filter(Boolean).join(' · ')
+        : item.group || 'Controls';
       if (next !== group) {
         group = next;
         box.append(
@@ -496,7 +555,9 @@ function renderDetails() {
       el(
         'div',
         'detail-action muted',
-        item.needsCapture
+        item.suggestedAction
+          ? 'This starter suggests ' + item.suggestedAction + '. Identify the footplate in Settings → Toe brake axes to bind it.'
+          : item.needsCapture
           ? 'The physical position is configured. Its reported input still needs verification.'
           : 'Unassigned',
       ),
@@ -507,7 +568,8 @@ function renderDetails() {
       el(
         'small',
         '',
-        [r.contextLabel, r.gesture, r.origin === 'default' ? 'Game default' : r.origin === 'draft' ? 'Staged binding' : 'Saved binding']
+        [r.contextLabel, r.gesture, r.origin === 'draft' ? 'Staged binding' : r.origin === 'default' ? 'Game default' :
+          profile.source.kind === 'starter' ? 'Uplink starter binding' : profile.source.kind === 'builtin' ? 'Game preset binding' : 'Saved binding']
           .filter(Boolean)
           .join(' · '),
       ),
@@ -517,7 +579,44 @@ function renderDetails() {
   grid.append(title, list);
   target.append(grid);
 }
-async function load(id, justSaved = null) {
+function readLayout(id) {
+  const pedalStarter = controllerSetup.devices.pedals?.starterLayout;
+  if (pedalStarter && id === controllerSetup.starterLayout && setup.pedalVisibility[controllerSetup.id] !== false) {
+    return window.viewer.profile(pedalStarter, setup.pedalAxesByRig[controllerSetup.id]);
+  }
+  return window.viewer.profile(id);
+}
+async function automaticLayout() {
+  const { gamePreset, starterLayout } = controllerSetup;
+  const hasStickLabels = data => currentSheet(data).some(control =>
+    (control.device === 'left' || control.device === 'right') && canLocate(control) && control.rows.length);
+  let reason;
+  let needsFolder = false;
+  try {
+    const active = await window.viewer.profile('active');
+    if (hasStickLabels(active)) return { id: 'active', data: active };
+    needsFolder = active.source.missing === 'game-data';
+    reason = needsFolder ? 'Choose your LIVE folder to see your game bindings.' :
+      active.source.missing ? 'Star Citizen has no saved active profile yet.' :
+        'Your active profile has no mapped controls on these sticks.';
+  } catch (error) {
+    reason = 'Could not read your active profile. ' + error.message;
+    needsFolder = true;
+  }
+  if (gamePreset) {
+    try {
+      if ((await window.viewer.sources()).some(source => source.id === gamePreset)) {
+        const data = await window.viewer.profile(gamePreset);
+        if (hasStickLabels(data)) return { id: gamePreset, data, notice: 'Showing a Star Citizen preset. ' + reason, needsFolder };
+      }
+    } catch {
+      // The installed preset may have disappeared during a game update. The packaged starter is still available.
+    }
+  }
+  return { id: starterLayout, data: await readLayout(starterLayout),
+    notice: 'Showing the HOTAS Uplink starter. ' + reason, needsFolder };
+}
+async function load(choice, justSaved = null) {
   if (editSession.active && !(await editSession.requestClose())) return;
   const token = ++requestId;
   loading = true;
@@ -527,11 +626,17 @@ async function load(id, justSaved = null) {
   $('refresh').disabled = true;
   $('edit-layout').disabled = true;
   try {
-    const result = id === 'blank' ? blank() : await window.viewer.profile(id);
+    const result = choice === 'auto' ? await automaticLayout() :
+      { id: choice, data: choice === 'blank' ? blank() : await readLayout(choice) };
     if (token !== requestId) return;
-    profile = result;
-    sourceId = id;
+    profile = result.data;
+    sourceId = result.id;
+    layoutChoice = choice;
+    autoNotice = result.notice || '';
+    needsGameFolder = Boolean(result.needsFolder);
     observed = null;
+    // Previous builds also stored "active" after automatic loads.
+    try { localStorage.setItem(layoutPreferenceKey(), choice === 'active' ? 'manual:active' : choice); } catch {}
   } catch (error) {
     if (token !== requestId) return;
     sourceError = 'Could not load layout. ' + error.message;
@@ -540,18 +645,42 @@ async function load(id, justSaved = null) {
   loading = false;
   $('refresh').disabled = false;
   $('profile-name').textContent = sourceName();
+  $('game-context').textContent = ({ builtin: 'STAR CITIZEN / GAME PRESET', starter: 'HOTAS UPLINK / STARTER',
+    export: 'STAR CITIZEN / SAVED LAYOUT', blank: 'STAR CITIZEN / LAYOUT' })[profile.source.kind] || 'STAR CITIZEN / LIVE';
   $('source').title = 'Choose layout · ' + sourceName();
   $('source-status').textContent = profile.source.build
     ? 'Star Citizen ' + profile.source.build
     : 'Local layout';
+  syncPedalView();
   rebuild();
-  if (justSaved) handoff.show(justSaved, true);
-  else if (!sourceError && (sourceId.startsWith('export:') || sourceId.startsWith('builtin:'))) {
-    handoff.show({ sourceId, revision: profile.source.revision, name: sourceName() });
+  showLayoutHandoff(justSaved);
+  return !sourceError;
+}
+function showLayoutHandoff(justSaved = null) {
+  if (sourceError || !(sourceId.startsWith('export:') || sourceId.startsWith('builtin:'))) return;
+  const saved = justSaved || { sourceId, revision: profile.source.revision, name: sourceName() };
+  handoff.show({ ...saved, setupName: controllerSetup.shortName || controllerSetup.name,
+    scope: { family: controllerSetup.family, pedals: pedalsEnabled() } }, Boolean(justSaved));
+}
+function layoutPreferenceKey() {
+  return 'layout-source/' + livePath.toLowerCase() + '/' + controllerSetup.id;
+}
+async function loadControllerLayout() {
+  const request = requestId;
+  let id = 'auto';
+  try { id = localStorage.getItem(layoutPreferenceKey()) || id; } catch {}
+  if (id === 'active') id = 'auto';
+  else if (id === 'manual:active') id = 'active';
+  // A named export can be renamed or removed in Star Citizen between sessions.
+  if (!['auto', 'active', 'blank', controllerSetup.starterLayout].includes(id)) {
+    try {
+      if (!(await window.viewer.sources()).some(source => source.id === id)) id = 'auto';
+    } catch { /* Try the remembered layout directly if listing the folder failed. */ }
   }
+  if (request === requestId) await load(id);
 }
 function openDialog(title, className = '') {
-  wheelSetup = null;
+  axisIdentifiers = [];
   $('picker').className = className;
   $('dialog-title').textContent = title;
   const content = $('dialog-content');
@@ -576,10 +705,11 @@ async function chooseSource() {
       },
       'source-option',
     );
-    b.append(el('small', '', id === sourceId ? 'Viewing' : label));
+    b.append(el('small', '', id === layoutChoice ? 'Selected' : id === sourceId ? 'Viewing' : label));
     parent.append(b);
   }
   const current = section(host, 'Starting point');
+  option(current, 'auto', 'Automatic for these controllers', 'Recommended');
   option(current, 'active', 'Active game profile', 'LIVE');
   option(current, 'blank', 'New blank layout', 'Empty');
   let sources = [];
@@ -592,8 +722,10 @@ async function chooseSource() {
   for (const [kind, title] of [
     ['export', 'Saved layouts'],
     ['builtin', 'Game presets'],
+    ['starter', 'HOTAS Uplink starters'],
   ]) {
-    const list = sources.filter((s) => s.kind === kind);
+    const list = sources.filter(s => s.kind === kind && (kind === 'export' ||
+      (kind === 'starter' ? s.id === controllerSetup.starterLayout : s.manufacturer?.toLowerCase() === controllerSetup.family)));
     if (!list.length) continue;
     const group = section(host, title);
     for (const s of list)
@@ -601,7 +733,7 @@ async function chooseSource() {
         group,
         s.id,
         s.name.replace(/^layout_/i, '').replace(/_exported\.xml$/i, ''),
-        kind === 'builtin' ? 'VKB' : 'XML',
+        kind === 'export' ? 'XML' : s.manufacturer,
       );
   }
   nextLaunch.addRestoreOption(section(host, 'Binding backup'));
@@ -625,7 +757,7 @@ async function chooseInstallation() {
       observed = null;
     }
     livePath = changed;
-    await load('active');
+    await loadControllerLayout();
   } catch (error) {
     sourceError = error.message;
     setNotice();
@@ -670,6 +802,15 @@ function openSettings() {
   notes.append(hint, reset);
   heading.append(label, value);
   appearance.append(heading, slider, notes);
+  if (controllerSetup.devices.sem) addVkbSettings(root);
+  if (pedalsEnabled()) addAxisSettings(root, 'pedals');
+  const about = section(root, 'About HOTAS Uplink');
+  about.append(
+    el('p', '', 'DeltaWerks made HOTAS Uplink to help Star Citizen players see and edit their joystick bindings. The 3D models are visual references for the controls on your desk.'),
+    el('p', 'dialog-note', 'This community project is independent of Cloud Imperium Games, Roberts Space Industries, and the controller manufacturers.'),
+  );
+}
+function addVkbSettings(root) {
   const area = section(root, 'SEM lever positions');
   area.append(
     el(
@@ -699,54 +840,82 @@ function openSettings() {
     row.append(select);
     area.append(row);
   }
-  const wheels = section(root, 'Center base wheels');
+  addAxisSettings(root, 'wheels');
+}
+function addAxisSettings(root, kind) {
+  const pedals = kind === 'pedals';
+  const area = section(root, pedals ? 'Toe brake axes' : 'Center base wheels');
   const message = el('p', 'dialog-note');
   message.setAttribute('role', 'status');
   const buttons = new Map();
   const positions = new Map();
   let listening = null;
-  function renderWheelSetup() {
+  function refresh() {
     for (const [side, { value, button }] of buttons) {
-      const connected = hardware.filter(device => liveHand(device.name) === side && device.readable);
+      const connected = hardware.filter(device => device.readable &&
+        (pedals ? controllerSetup.devices.pedals.matches(device) : liveHand(device, 'vkb') === side));
       button.disabled = connected.length !== 1;
       if (side === listening && button.disabled) listening = null;
-      value.textContent = (setup[side + 'Wheel'] || 'z').toUpperCase();
-      button.textContent = listening === side ? 'Cancel' : 'Identify wheel';
-      button.setAttribute('aria-label', listening === side ? 'Cancel ' + side + ' wheel identification' : 'Identify ' + side + ' wheel');
+      const axis = pedals ? setup.pedalAxesByRig[controllerSetup.id]?.[side + '-toe'] : setup[side + 'Wheel'] || 'z';
+      value.textContent = axis ? axis.toUpperCase() : 'Unidentified';
+      const noun = pedals ? 'toe brake' : 'wheel';
+      button.textContent = listening === side ? 'Cancel' : 'Identify ' + noun;
+      button.setAttribute('aria-label', listening === side ? 'Cancel ' + side + ' ' + noun + ' identification' : 'Identify ' + side + ' ' + noun);
     }
-    message.textContent = listening ? 'Roll the ' + listening + ' center wheel a little way.'
-      : compatibilityMode ? 'Wheel identification uses live input in the standard app.'
-      : 'If a wheel selects the wrong control or stays quiet, identify its input here.';
+    if (listening) message.textContent = pedals ? 'Press just the ' + listening + ' toe brake.' : 'Roll the ' + listening + ' center wheel a little way.';
+    else if (compatibilityMode) message.textContent = 'Axis identification uses live input in the standard app.';
+    else if (!pedals) message.textContent = 'If a wheel selects the wrong control or stays quiet, identify its input here.';
+    else message.textContent = profile.source.kind === 'starter'
+      ? 'Identify each footplate to include its suggested driving action when you save this starter.'
+      : 'Identify each toe brake to show its saved bindings on the pedals.';
   }
-  for (const [side, label] of [['left', 'Left stick'], ['right', 'Right stick']]) {
+  for (const side of ['left', 'right']) {
+    const label = (side === 'left' ? 'Left' : 'Right') + (pedals ? ' toe brake' : ' stick');
     const row = el('div', 'setup-row');
     const value = el('span', 'physical');
-    const button = assignedButton('', () => {
-      listening = listening === side ? null : side;
+    const button = assignedButton('', async () => {
+      const next = listening === side ? null : side;
+      if (next && pedals && profile.source.kind === 'starter' && editSession.active && !(await editSession.requestClose())) return;
+      for (const id of axisIdentifiers) id.cancel();
+      listening = next;
       positions.clear();
-      renderWheelSetup();
+      refresh();
     }, 'text-button');
     row.append(el('span', '', label), value, button);
-    wheels.append(row);
+    area.append(row);
     buttons.set(side, { value, button });
   }
-  wheels.append(message);
-  wheelSetup = {
-    refresh: renderWheelSetup,
+  area.append(message);
+  axisIdentifiers.push({
+    refresh,
+    cancel() { listening = null; refresh(); },
     record(event, mapped) {
-      if (!listening || mapped?.host !== listening || !isWheelAxis(mapped.raw)) return;
-      if (!hasWheelTravel(positions, event, 0.16)) return;
+      if (!listening || !mapped) return;
+      if (pedals ? mapped.host !== 'pedals' || !isPedalToeAxis(mapped.raw)
+        : mapped.host !== listening || !isWheelAxis(mapped.raw)) return;
+      if (!hasAxisTravel(positions, event, 0.16)) return;
       const side = listening;
       listening = null;
-      setup[side + 'Wheel'] = mapped.raw;
+      let cleared = '';
+      if (pedals) {
+        const axes = setup.pedalAxesByRig[controllerSetup.id] ||= {};
+        const other = side === 'left' ? 'right' : 'left';
+        if (axes[other + '-toe'] === mapped.raw) {
+          delete axes[other + '-toe'];
+          cleared = ' Identify the ' + other + ' toe brake again.';
+        }
+        axes[side + '-toe'] = mapped.raw;
+      } else setup[side + 'Wheel'] = mapped.raw;
       rememberSetup();
       wheelPositions.clear();
-      rebuild();
-      renderWheelSetup();
-      message.textContent = (side === 'left' ? 'Left' : 'Right') + ' wheel identified as ' + mapped.raw.toUpperCase() + '.';
+      if (pedals && profile.source.kind === 'starter') void load(layoutChoice);
+      else rebuild();
+      refresh();
+      message.textContent = (side === 'left' ? 'Left' : 'Right') + (pedals ? ' toe brake' : ' wheel') +
+        ' identified as ' + mapped.raw.toUpperCase() + '.' + cleared;
     },
-  };
-  renderWheelSetup();
+  });
+  refresh();
 }
 function detailsDialog() {
   const root = openDialog('Profile details'),
@@ -804,6 +973,11 @@ function markControl(id, token, enabled) {
 }
 function controlForInput(mapped) {
   if (!mapped) return null;
+  if (mapped.host === 'pedals') {
+    if (!pedalsEnabled()) return null;
+    const item = sheet.find(control => control.device === 'pedals' && control.reportedInput === mapped.raw);
+    if (item) return item;
+  }
   // A wheel identified on this stick takes precedence when an older SEM
   // assignment uses the same logical axis in the saved game layout.
   if (setup[mapped.host + 'Wheel'] === mapped.raw) {
@@ -816,14 +990,20 @@ function controlForInput(mapped) {
 function syncHeldControls() {
   activeInputs.clear();
   for (const [id, buttons] of heldButtons) for (const button of buttons) {
-    const mapped = physicalInput({ type: 'button', id, button }, hardware, controllerSetup.controlsByDevice);
+    const mapped = physicalInput({ type: 'button', id, button }, hardware, controllerSetup.controlsByDevice, controllerSetup.family);
     const item = controlForInput(mapped);
     if (item) activeInputs.add(item.id);
   }
 }
 function receiveDevices(devices) {
+  const hadPedals = pedalsEnabled();
   hardware = devices;
-  wheelSetup?.refresh();
+  if (hadPedals !== pedalsEnabled()) {
+    syncPedalView();
+    rebuild();
+    if (!loading) showLayoutHandoff();
+  }
+  for (const identifier of axisIdentifiers) identifier.refresh();
   heldButtons.clear();
   for (const device of devices) heldButtons.set(device.id, new Set(device.pressedButtons || []));
   syncHeldControls();
@@ -835,8 +1015,8 @@ function receiveDevices(devices) {
   renderDevices();
 }
 function applyInput(event, wheelMoved = false) {
-  const mapped = physicalInput(event, hardware, controllerSetup.controlsByDevice);
-  if (!mapped) return;
+  const mapped = physicalInput(event, hardware, controllerSetup.controlsByDevice, controllerSetup.family);
+  if (!mapped || (mapped.host === 'pedals' && !pedalsEnabled())) return;
   const item = controlForInput(mapped);
   const release = event.type === 'button' && !event.pressed;
   if (event.type === 'button') {
@@ -881,7 +1061,7 @@ function flushAxis() {
 }
 // These levers stay where they are set. Measure travel from the last accepted
 // position so a slow turn works anywhere on the wheel, even around its midpoint.
-function hasWheelTravel(positions, event, threshold) {
+function hasAxisTravel(positions, event, threshold) {
   if (!Number.isFinite(event.value)) return false;
   const key = event.id + '/' + event.axis;
   const from = positions.get(key) ?? event.value - (Number.isFinite(event.delta) ? event.delta : 0);
@@ -904,12 +1084,12 @@ function input(event) {
   monitor.record(event);
   if (event.type === 'axis') {
     if (document.hidden) return;
-    const mapped = physicalInput(event, hardware, controllerSetup.controlsByDevice);
-    if (wheelSetup && $('picker').open) {
-      wheelSetup.record(event, mapped);
+    const mapped = physicalInput(event, hardware, controllerSetup.controlsByDevice, controllerSetup.family);
+    if (axisIdentifiers.length && $('picker').open) {
+      for (const identifier of axisIdentifiers) identifier.record(event, mapped);
       return;
     }
-    if (controlForInput(mapped)?.group === 'throttle' && hasWheelTravel(wheelPositions, event, 0.05) && page !== 'monitor') {
+    if (controlForInput(mapped)?.group === 'throttle' && hasAxisTravel(wheelPositions, event, 0.05) && page !== 'monitor') {
       clearAxis();
       applyInput(event, true);
       return;
@@ -918,7 +1098,10 @@ function input(event) {
     // The raw monitor already follows each axis. Outside it, passive highlighting
     // can sample ongoing motion while armed capture still sees the next frame.
     if (page === 'monitor' || inputFrame || axisTimer) return;
-    const delay = editSession.active && !reference ? 0 : 100 - (performance.now() - lastAxisTime);
+    // A visible second-monitor reference still follows the sticks while the
+    // game has focus. Sample continuous axes less often in that case.
+    const interval = document.hasFocus() ? 100 : 250;
+    const delay = editSession.active && !reference ? 0 : interval - (performance.now() - lastAxisTime);
     if (delay > 0) axisTimer = setTimeout(flushAxis, delay);
     else inputFrame = requestAnimationFrame(flushAxis);
     return;
@@ -958,6 +1141,31 @@ for (const b of document.querySelectorAll('[data-place]'))
     rig?.setPlacement(setup.placement);
     rebuild();
   };
+for (const b of document.querySelectorAll('[data-pedals]'))
+  b.onclick = async () => {
+    const enable = b.dataset.pedals === 'on';
+    if (!controllerSetup.devices.pedals || enable === pedalsEnabled() || loading || editSession.saving || nextLaunch.writing) return;
+    const starter = profile.source.kind === 'starter';
+    if (starter && editSession.active && !(await editSession.requestClose())) return;
+    const id = controllerSetup.id;
+    const previous = setup.pedalVisibility[id];
+    setup.pedalVisibility[id] = enable;
+    clearAxis();
+    if (starter) {
+      if (!(await load(layoutChoice))) {
+        if (previous === undefined) delete setup.pedalVisibility[id];
+        else setup.pedalVisibility[id] = previous;
+        syncPedalView();
+        rebuild();
+        return;
+      }
+    } else {
+      syncPedalView();
+      rebuild();
+      showLayoutHandoff();
+    }
+    rememberSetup();
+  };
 $('home').onclick = () => {
   setFocus('all');
 };
@@ -971,9 +1179,10 @@ $('hardware').onclick = openSettings;
 $('diagnostics').onclick = detailsDialog;
 $('notice-folder').onclick = chooseInstallation;
 $('source').onclick = chooseSource;
-$('refresh').onclick = () => load(sourceId);
+$('use-automatic').onclick = () => load('auto');
+$('refresh').onclick = () => load(layoutChoice);
 $('close-dialog').onclick = () => $('picker').close();
-$('picker').addEventListener('close', () => { wheelSetup = null; });
+$('picker').addEventListener('close', () => { if (!$('picker').open) axisIdentifiers = []; });
 $('picker').addEventListener('click', (e) => {
   if (e.target === $('picker')) {
     const r = $('picker').getBoundingClientRect();
@@ -987,8 +1196,34 @@ function sceneUnavailable(message) {
   const open = assignedButton('Open binding sheet', () => updatePage('sheet'), 'text-button');
   status.replaceChildren(document.createTextNode(message + ' '), open);
 }
+function chooseFirstController() {
+  if (setup.controllerChosen) return;
+  const dialog = $('controller-welcome');
+  return new Promise(resolve => {
+    for (const config of rigProfiles) {
+      const button = assignedButton(config.name, () => {
+        controllerSetup = config;
+        setup.rigId = config.id;
+        setup.controllerChosen = true;
+        rememberSetup();
+        dialog.close();
+        resolve();
+      }, 'source-option');
+      const arrow = el('i');
+      arrow.dataset.icon = 'arrow';
+      button.append(arrow);
+      $('welcome-choices').append(button);
+    }
+    addIcons(dialog);
+    dialog.addEventListener('cancel', event => event.preventDefault());
+    dialog.showModal();
+  });
+}
+const setupSelect = $('controller-setup');
+setupSelect.disabled = true;
+for (const config of rigProfiles) setupSelect.add(new Option(config.shortName || config.name, config.id));
 const unsubscribe = window.viewer.onInput(input);
-const initial = await window.viewer.state();
+const [initial] = await Promise.all([window.viewer.state(), chooseFirstController()]);
 function openControllerScene() {
   rig?.dispose();
   rig = null;
@@ -999,6 +1234,7 @@ function openControllerScene() {
       profile: controllerSetup,
       scanDevices: initial.scanDevicesByRig?.[controllerSetup.id] ?? initial.scanDevices,
       initialPlacement: setup.placement,
+      initialPedals: pedalsEnabled(),
       onReady() {
         $('scene-status').hidden = true;
         labelRig();
@@ -1022,27 +1258,35 @@ function openControllerScene() {
     sceneUnavailable('3D view unavailable. ' + error.message);
   }
 }
-const setupSelect = $('controller-setup');
-for (const config of rigProfiles) setupSelect.add(new Option(config.name, config.id));
 renderControllerSetup();
 openControllerScene();
 setupSelect.onchange = async () => {
   const next = rigForId(setupSelect.value);
   if (controllerSetup === next) return;
-  if (editSession.active && !(await editSession.requestClose())) {
-    setupSelect.value = controllerSetup.id;
-    return;
+  setupSelect.value = controllerSetup.id;
+  if (editSession.saving || nextLaunch.writing) return;
+  setupSelect.disabled = true;
+  try {
+    if (editSession.active && !(await editSession.requestClose())) return;
+    ++requestId;
+    controllerSetup = next;
+    setup.rigId = next.id;
+    rememberSetup();
+    profile = blank();
+    sourceId = 'blank';
+    loading = true;
+    handoff.show(null);
+    clearAxis();
+    wheelPositions.clear();
+    observed = selected = null;
+    focus = 'all';
+    renderControllerSetup();
+    openControllerScene();
+    rebuild();
+    await loadControllerLayout();
+  } finally {
+    setupSelect.disabled = false;
   }
-  controllerSetup = next;
-  setup.rigId = next.id;
-  rememberSetup();
-  clearAxis();
-  wheelPositions.clear();
-  observed = selected = null;
-  focus = 'all';
-  renderControllerSetup();
-  openControllerScene();
-  rebuild();
 };
 document.addEventListener('visibilitychange', () => {
   monitor.setVisible(page === 'monitor' && !document.hidden);
@@ -1062,5 +1306,6 @@ compatibilityMode = Boolean(initial.compatibilityMode);
 streamStatus = initial.status;
 receiveDevices(initial.devices);
 monitor.setStatus(streamStatus);
-await load('active');
+await loadControllerLayout();
+setupSelect.disabled = false;
 if (initial.startEditing && !sourceError) $('edit-layout').click();

@@ -2,11 +2,16 @@ import { anchors, surfaceNormals } from './anchors.js';
 import { controlsByDevice } from './controls.js';
 import { createSchematic } from './schematic.js';
 import { defaultRigId, modelAssetsByRig } from './model-assets.mjs';
+import { virpilAlpha } from './virpil-alpha.mjs';
 
 // Device IDs connect the model, its control inventory, and the inputs on the sheet.
 export const defaultRig = {
   id: defaultRigId,
+  family: 'vkb',
   name: 'VKB Gladiator EVO / Omni-Throttle',
+  shortName: 'VKB Gladiator EVO',
+  gamePreset: 'builtin:gnx',
+  starterLayout: 'starter:vkb',
   controlsByDevice, anchors, surfaceNormals, createFallback: createSchematic,
   devices: {
     left: {
@@ -45,7 +50,7 @@ export const defaultRig = {
   },
 };
 
-export const rigProfiles = [defaultRig];
+export const rigProfiles = [defaultRig, virpilAlpha];
 
 export function rigForId(id) {
   return rigProfiles.find(rig => rig.id === id) || defaultRig;

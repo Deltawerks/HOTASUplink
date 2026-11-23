@@ -5,10 +5,10 @@ import { animateHatTransition } from './hat-transition.js';
 
 const svgNS = 'http://www.w3.org/2000/svg';
 const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
-const directionSymbols = { up: '↑', right: '→', down: '↓', left: '←', press: '●',
+const directionSymbols = { up: '↑', right: '→', down: '↓', left: '←', press: '●', 'second-press': 'Press 2',
   'up-right': '↗', 'down-right': '↘', 'down-left': '↙', 'up-left': '↖', horizontal: '↔', vertical: '↕' };
 const pairedDirections = ['up', 'down', 'left', 'right', 'up-left', 'up-right',
-  'down-left', 'down-right', 'horizontal', 'vertical', 'press'];
+  'down-left', 'down-right', 'horizontal', 'vertical', 'press', 'second-press'];
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -35,7 +35,7 @@ export function createCompactLabels(host, edit, devices) {
   const rows = new Map();
   const stageControls = [...(host.closest('.stage')?.querySelectorAll('.camera-tools, .orbit-hint') || [])];
   let reserved = [], measuredWidth = 0, measuredHeight = 0;
-  let expanded = null, popup = null, openKey = null, enabled = true;
+  let expanded = null, popup = null, openKey = null, markerAnchor = null, enabled = true;
   let lastScope = null;
 
   function trigger(row, key) {
@@ -51,7 +51,7 @@ export function createCompactLabels(host, edit, devices) {
     const visible = !expanded.chip.hidden;
     document.removeEventListener('pointerdown', outside, true);
     document.removeEventListener('keydown', escape, true);
-    popup.remove(); popup = expanded = openKey = null;
+    popup.remove(); popup = expanded = openKey = markerAnchor = null;
     if (restoreFocus && visible) button.focus({ preventScroll: true });
   }
   function outside(event) {
@@ -100,19 +100,21 @@ export function createCompactLabels(host, edit, devices) {
   }
 
   function positionPopup() {
-    if (!popup || !expanded.box) return;
-    const { x, y, w, h } = expanded.box;
+    if (!popup) return;
+    const anchor = expanded.chip.hidden ? markerAnchor : expanded.box;
+    if (!anchor) return;
+    const { x, y, w, h } = anchor;
     const width = overlay.clientWidth, height = overlay.clientHeight, pw = popup.offsetWidth, ph = popup.offsetHeight;
     const px = x + w + pw + 7 <= width ? x + w + 5 : x - pw - 5 >= 0 ? x - pw - 5 : x + w / 2 - pw / 2;
     const py = clamp(y + h / 2 - 25, 4, height - ph - 4);
     popup.style.transform = 'translate(' + Math.round(clamp(px, 4, width - pw - 4)) + 'px,' + Math.round(py) + 'px)';
   }
 
-  function open(row, key = null) {
-    if (!row || row.chip.hidden) return false;
+  function open(row, key = null, anchor = null) {
+    if (!row || (row.chip.hidden && !anchor)) return false;
     if (expanded === row && openKey === key) { close(true); return true; }
     close();
-    expanded = row; openKey = key;
+    expanded = row; openKey = key; markerAnchor = anchor;
     popup = node('div', 'rig-compact-popup');
     popup.setAttribute('role', 'dialog');
     popup.setAttribute('aria-label', unitName[row.item.device] + ' · ' + row.item.groupTitle);
@@ -154,12 +156,18 @@ export function createCompactLabels(host, edit, devices) {
         chip.append(directions); overlay.append(chip);
         const line = document.createElementNS(svgNS, 'path'); lines.append(line);
         row = { chip, summary, text, count, directions, line, item, sizes: {} }; rows.set(id, row);
-        chip.onclick = event => open(row, event.target.closest('[data-rig-key]')?.dataset.rigKey || null);
+        chip.onclick = event => {
+          const key = event.target.closest('[data-rig-key]')?.dataset.rigKey;
+          if (key && row.item.editSlots) {
+            close();
+            edit(row.item.device, key);
+          } else open(row, key || null);
+        };
       }
       row.item = item;
       const text = shortName(item);
       const actions = item.groupEntries.reduce((n, entry) => n + (entry.actions?.length || 0), 0);
-      const extra = !row.summary && actions > 1 ? '+' + (actions - 1) : '';
+      const extra = item.calloutNote || (!row.summary && actions > 1 ? '+' + (actions - 1) : '');
       if (row.text.textContent !== text || row.count.textContent !== extra) {
         row.text.textContent = text; row.count.textContent = extra; row.count.hidden = !extra;
         row.sizes = {};
@@ -169,13 +177,16 @@ export function createCompactLabels(host, edit, devices) {
         : item.groupEntries.filter(entry => entry.actions?.length);
       const directional = Boolean(row.summary) || (entries.length > 1 && entries.length <= 5 && entries.every(entry => directionSymbols[entry.direction]));
       const directionText = directional ? entries.map(entry => [entry.direction, entry.compactName || entry.text, entry.actions.length, entry.key, entry.label]) : [];
-      const signature = JSON.stringify(directionText);
+      const signature = JSON.stringify([directionText, item.editSlots]);
       if (row.signature !== signature) {
         row.signature = signature; row.sizes = {}; row.directional = directional;
         const focusKey = row.chip.contains(document.activeElement) ? document.activeElement.dataset.rigKey : null;
+        const twoPresses = entries.some(entry => entry.direction === 'second-press');
         row.directions.replaceChildren(...directionText.map(([direction, name, count, key, label]) => {
           const line = node(row.summary ? 'button' : 'span', row.summary ? 'rig-compact-direction rig-hat-slot' : 'rig-compact-direction');
-          const glyph = node('b', '', directionSymbols[direction]);
+          const stagedPress = twoPresses && (direction === 'press' || direction === 'second-press');
+          const glyph = node('b', stagedPress ? 'rig-press-stage' : '',
+            stagedPress && direction === 'press' ? 'Press 1' : directionSymbols[direction]);
           glyph.setAttribute('aria-hidden', 'true');
           line.append(glyph, node('span', '', name));
           if (count > 1) line.append(node('small', 'rig-compact-count', '+' + (count - 1)));
@@ -183,9 +194,11 @@ export function createCompactLabels(host, edit, devices) {
           if (row.summary) {
             line.type = 'button';
             line.dataset.direction = direction; line.dataset.rigKey = key;
-            line.setAttribute('aria-label', unitName[item.device] + ' · ' + item.groupTitle + ' · ' + line.title);
-            line.setAttribute('aria-haspopup', 'dialog');
-            line.setAttribute('aria-expanded', String(expanded === row && key === openKey));
+            line.setAttribute('aria-label', (item.editSlots ? 'Edit ' : '') + unitName[item.device] + ' · ' + item.groupTitle + ' · ' + line.title);
+            if (!item.editSlots) {
+              line.setAttribute('aria-haspopup', 'dialog');
+              line.setAttribute('aria-expanded', String(expanded === row && key === openKey));
+            }
             line.classList.toggle('rig-hat-empty', count === 0);
           }
           return line;
@@ -193,7 +206,7 @@ export function createCompactLabels(host, edit, devices) {
         if (focusKey) trigger(row, focusKey).focus({ preventScroll: true });
       }
       const caption = unitName[item.device] + ' · ' + item.groupTitle;
-      const accessible = row.summary ? caption : caption + ' · ' + text;
+      const accessible = row.summary ? caption : [caption, text, item.calloutNote].filter(Boolean).join(' · ');
       row.chip.setAttribute('aria-label', accessible);
       (row.summary || row.chip).title = accessible;
       if (row.summary) {
@@ -256,11 +269,11 @@ export function createCompactLabels(host, edit, devices) {
     measuredWidth = 0;
   }
 
-  function hide(row) {
+  function hide(row, markerVisible = false) {
     row.transitionFrom = null;
     row.chip.hidden = true;
     row.line.removeAttribute('d');
-    if (expanded === row) close();
+    if (expanded === row && !(markerAnchor && markerVisible)) close();
   }
 
   function update(width, height, camera, lookup, scope, geometry, deferNewPins, prepareGeometry, orbitTarget, showHatDirections, closeHatDirections) {
@@ -291,6 +304,9 @@ export function createCompactLabels(host, edit, devices) {
         continue;
       }
       row.ax = (point.x + 1) * width / 2; row.ay = (1 - point.y) * height / 2;
+      if (expanded === row && markerAnchor) {
+        markerAnchor.x = row.ax; markerAnchor.y = row.ay;
+      }
       row.depth = point.z; row.unit = target.parent; row.marker = target;
       if (row.summary) {
         const detailed = row.item.group === 'pov' ? closeHatDirections : showHatDirections;
@@ -308,12 +324,12 @@ export function createCompactLabels(host, edit, devices) {
       if (row.pin) {
         projectPin(row, row.pin, width, height, camera, point);
         if (!(point.z >= -1 && point.z <= 1)) {
-          hide(row);
+          hide(row, true);
           continue;
         }
         row.pinX = point.x; row.pinY = point.y;
       } else if (deferNewPins) {
-        hide(row);
+        hide(row, true);
         continue;
       } else {
         pending.push(row);
@@ -446,7 +462,8 @@ export function createCompactLabels(host, edit, devices) {
       row.chip.style.width = row.widthLimit ? row.widthLimit + 'px' : '';
     }
   }
-  return { set, update, resetLayout, invalidateMeasurements, openGroup: (device, group) => open(rows.get(device + '/' + group)),
+  return { set, update, resetLayout, invalidateMeasurements,
+    openGroup(device, group, x, y) { return open(rows.get(device + '/' + group), null, { x, y, w: 0, h: 0 }); },
     setVisible(visible) { enabled = visible; if (!visible) close(); },
     dispose() { close(); rows.clear(); overlay.remove(); },
   };

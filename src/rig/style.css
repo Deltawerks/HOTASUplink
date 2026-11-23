@@ -178,7 +178,8 @@
 }
 .rig-hat-slot, .rig-hat-motion-slot { min-height: 1.65em; padding: 1px 5px; border-color: #536c7c; }
 .rig-hat-slot b, .rig-hat-motion-slot b { color: #9ce7f3; }
-.rig-hat-slot[data-direction="press"], .rig-hat-motion-slot[data-direction="press"] { grid-column: 1 / -1; justify-content: center; }
+.rig-compact-direction .rig-press-stage { width: auto; font-family: inherit; }
+:is(.rig-compact-directions, .rig-hat-motion-grid):not(:has(> [data-direction="second-press"])) > [data-direction="press"] { grid-column: 1 / -1; justify-content: center; }
 .rig-hat-empty { color: #aabaca; }
 .rig-hat-group:focus-within { z-index: 1; }
 .rig-hat-group.rig-compact-active .rig-hat-summary,

@@ -255,4 +255,4 @@ async function updateActive(options, checkClosed, restoring) {
 const applyActiveFile = (options, checkClosed = checkGameClosed) => updateActive(options, checkClosed, false);
 const restoreActiveFile = (options, checkClosed = checkGameClosed) => updateActive(options, checkClosed, true);
 
-module.exports = { getActiveFileState, applyActiveFile, restoreActiveFile, checkGameClosed };
+module.exports = { getActiveFileState, applyActiveFile, restoreActiveFile, checkGameClosed, lockProfile, readProfileFile: readFile };

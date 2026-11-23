@@ -23,6 +23,53 @@ const profile = {
 };
 const hardware = [{ id: 'right-id', name: 'VKBsim Gladiator EVO R SEM' }, { id: 'left-id', name: 'VKBsim Gladiator EVO OT L' }];
 
+test('each controller setup labels only its own stick, even with matching button numbers', () => {
+  const devices = [
+    { slot: 1, device: 'right', product: 'RIGHT VPC Stick MT-50CM3 {43913344-0000-0000-0000-504944564944}' },
+    { slot: 2, device: 'right', product: 'VKB Gladiator R' },
+    { slot: 3, device: 'unknown', product: 'VPC R1-FALCON Pedals' },
+  ];
+  const bindings = devices.map(d => ({ device: d.device, slot: d.slot, input: 'button4', action: 'action' + d.slot }));
+  const connected = devices.map(d => ({ id: String(d.slot), name: d.product.split('{')[0] }));
+  for (const [family, slot] of [['vkb', 2], ['virpil', 1]]) {
+    const sheet = buildSheet({ devices, bindings }, inventory, {}, family);
+    assert.deepEqual(sheet.find(c => c.id === 'right:button4').rows.map(row => row.slot), [slot]);
+    assert.equal(sheet.some(c => c.rows.includes(bindings[2])), false);
+    for (const d of devices) {
+      const event = { id: String(d.slot), type: 'button', button: 4 };
+      assert.equal(physicalInput(event, connected, inventory, family).host, d.slot === slot ? 'right' : 'unknown');
+    }
+  }
+  const duplicate = [...connected, { ...connected[0], id: 'extra' }];
+  assert.equal(physicalInput({ id: '1', type: 'button', button: 4 }, duplicate, inventory, 'virpil').host, 'unknown');
+});
+
+test('optional Falcon pedals match a separate slot; signed toe bindings take priority over local calibration', () => {
+  const device = { slot:3, device:'pedals', product:'VPC R1-FALCON Pedals {01FA3344-0000-0000-0000-504944564944}' };
+  const pedals = [
+    control('pedals', 'z', 'rudder', { kind:'axis' }),
+    ...['left-toe', 'right-toe'].map(key => control('pedals', key, key, { kind:'axis', needsCapture:true })),
+  ];
+  const inventory = { pedals };
+  const rows = [
+    { device:'pedals', slot:3, input:'z', action:'roll' },
+    { device:'pedals', slot:3, input:'y', action:'left-brake', physicalKey:'left-toe', physicalDevice:'pedals' },
+    { device:'pedals', slot:3, input:'y', action:'another-left-binding' },
+    { device:'pedals', slot:3, input:'x', action:'right-brake' },
+  ];
+  const profile = { bindings:rows, devices:[device] };
+  assert.deepEqual(buildSheet(profile, inventory, { pedalsEnabled:false }, 'virpil'), []);
+  const sheet = buildSheet(profile, inventory, { pedalsEnabled:true, pedalAxes:{'left-toe':'rotx','right-toe':'x'} }, 'virpil');
+  assert.deepEqual(sheet.find(c => c.key === 'z').rows, [rows[0]]);
+  assert.deepEqual(sheet.find(c => c.key === 'left-toe').rows, rows.slice(1,3));
+  assert.deepEqual(sheet.find(c => c.key === 'right-toe').rows, [rows[3]]);
+  const live = [{ id:'falcon', name:'Custom pedal name', vid:'3344', pid:'01FA' }];
+  const event = { id:'falcon', type:'axis', axis:'RZ' };
+  assert.deepEqual(physicalInput(event, live, inventory, 'virpil'), { host:'pedals', device:'pedals', raw:'rotz', key:'rotz' });
+  assert.equal(physicalInput(event, [...live, {...live[0], id:'second'}], inventory, 'virpil').host,'unknown');
+  assert.equal(physicalInput(event, [{...live[0], vid:'ffff'}], inventory, 'virpil').host,'unknown');
+});
+
 test('side selection leaves the saved SEM route intact, while new input uses the reporting host', () => {
   for (const placement of ['left', 'right']) {
     const sheet = buildSheet(profile, inventory, { placement, flaps: '2' });

@@ -13,6 +13,7 @@ const saved = registry([[1, 'left', 'VKB L'], [2, 'right', 'VKB R'], [3, 'unknow
 const live = registry([[1, 'right', 'VKB R'], [2, 'left', 'VKB L'], [4, 'unknown', 'Pedals']]);
 const action = (name, body) => '<action name="' + name + '">' + body + '</action>';
 const bind = (input, attrs = '') => '<rebind input="' + input + '"' + attrs + '/>';
+const alternate = (input, attrs = '') => '<addbind input="' + input + '"' + attrs + '/>';
 const group = body => '<actionmap name="flight">' + body + '</actionmap>';
 const map = body => '<ActionMaps version="1">' + body + '</ActionMaps>';
 const declarations = devices => [...devices.values()].map(d =>
@@ -29,7 +30,7 @@ function inputsFor(text, name) {
   let root = xml(text);
   root = root.children.find(n => n.tag === 'ActionProfiles') || root;
   const node = root.children.find(n => n.tag === 'actionmap').children.find(n => n.attrs.name === name);
-  return node?.children.filter(n => n.tag === 'rebind').map(n => n.attrs.input) || [];
+  return node?.children.filter(n => ['rebind', 'addbind'].includes(n.tag)).map(n => n.attrs.input) || [];
 }
 
 test('routes both hands across a reorder and retains the active wrapper, calibration, unrelated inputs, and modifiers', () => {
@@ -72,6 +73,63 @@ test('single-stick exports preserve other stick assignments even within the same
   assert.deepEqual(inputsFor(result, 'fire'), ['js1_button2', 'js2_button9']);
 });
 
+test('declared but unbound Falcon pedals and sticks of other families remain intact', () => {
+  const devices = registry([[1, 'right', 'VKB R'], [2, 'right', 'RIGHT VPC Stick MT-50CM3'], [3, 'pedals', 'VPC R1-FALCON Pedals']]);
+  const active = map(declarations(devices) + group(action('landing', bind('js1_button5') + alternate('js2_button6') + alternate('js3_z'))));
+  const preset = map(declarations(devices) + group(action('landing', bind('js2_button7') + alternate('js1_button9'))));
+  const options = { presetDevices: devices, activeDevices: devices, scope: { family: 'virpil', pedals: true } };
+  assert.deepEqual(inputsFor(merge(active, preset, options), 'landing'), ['js1_button5', 'js3_z', 'js2_button7']);
+});
+
+test('applies both Request Landing buttons across a slot reorder and retains unrelated bindings and gestures', () => {
+  const extraKey = alternate('kb1_n', ' activationMode="hold"');
+  const active = map(declarations(live) + group(action('landing', bind('kb1_l') + extraKey + bind('js2_button8') + alternate('js4_button3'))));
+  const preset = map(declarations(saved) + group(action('landing', bind('js2_button42') + alternate('js2_button47', ' multiTap="2"'))));
+  const result = merge(active, preset);
+  assert.deepEqual(inputsFor(result, 'landing'), ['kb1_l', 'kb1_n', 'js1_button42', 'js1_button47', 'js4_button3']);
+  assert.ok(result.includes(bind('js1_button42')));
+  assert.ok(result.includes(alternate('js1_button47', ' multiTap="2"')));
+  assert.ok(result.includes(alternate('js4_button3')));
+  assert.ok(result.includes(extraKey));
+  assert.equal(merge(result, preset), result);
+});
+
+test('an additive-only preset keeps an inherited primary while an explicit blank removes it', () => {
+  const definitions = defaultMap([['landing', 'button1']]);
+  const active = map(declarations(live) + group(action('landing', bind('js1_button2') + alternate('js2_button3'))));
+  const preset = map(declarations(saved) + group(action('landing', alternate('js1_button4'))));
+  const result = merge(active, preset, { definitions });
+  assert.deepEqual(inputsFor(result, 'landing'), ['js2_button1', 'js2_button4']);
+  assert.ok(result.includes(bind('js2_button1')) && result.includes(alternate('js2_button4')));
+  assert.equal(merge(result, preset, { definitions }), result);
+  const cleared = preset.replace(alternate('js1_button4'), bind('js1_ ') + alternate('js1_button4'));
+  const onlyAlternate = merge(active, cleared, { definitions });
+  assert.deepEqual(inputsFor(onlyAlternate, 'landing'), ['js2_button4']);
+  assert.ok(onlyAlternate.includes(bind('js2_button4')));
+  assert.equal(merge(onlyAlternate, cleared, { definitions }), onlyAlternate);
+});
+
+test('untouched alternatives on other devices and multiple inherited defaults do not rewrite the active document', () => {
+  const definitions = defaultMap([['landing', 'button1', 'button2']]);
+  const legacyPedals = action('brake', bind('js4_x') + bind('js4_slider1'));
+  const active = map(declarations(live) + group(legacyPedals));
+  assert.equal(merge(active, map(declarations(live)), { definitions, presetDevices: live }), active);
+});
+
+test('partial-device apply promotes an unrelated remaining alternate and preserves modifiers referenced by keyboard alternates', () => {
+  const onlyLeft = registry([[1, 'left', 'VKB L']]);
+  const modifiers = '<modifiers><mod input="js2_button5"/></modifiers>';
+  const active = map(declarations(live) + group(action('landing', bind('js2_button3') + alternate('js1_button2'))));
+  const preset = map(declarations(onlyLeft) + group(action('landing', bind('js1_ '))));
+  const result = merge(active, preset, { presetDevices: onlyLeft });
+  assert.deepEqual(inputsFor(result, 'landing'), ['js1_button2']);
+  assert.ok(result.includes(bind('js1_button2')));
+  assert.equal(merge(result, preset, { presetDevices: onlyLeft }), result);
+  const withModifier = map(declarations(live) + modifiers + group(action('landing',
+    bind('kb1_l') + alternate('kb1_n', ' modifier="js2_button5"'))));
+  assert.throws(() => merge(withModifier, preset, { presetDevices: onlyLeft }), /Another device uses a joystick modifier/);
+});
+
 test('upgrades earlier signed SEM hints when a stick changes slot', () => {
   const attrs = { input: 'js1_button41', multiTap: '2' }, key = 'button41';
   const marker = '<!-- VKBTOOL SEM v1 ' + semSignature('flight', 'start', attrs, key) + ' ' + key + ' -->';
@@ -105,7 +163,7 @@ test('refuses ambiguous routes, unidentified binding slots, and conflicting modi
   assert.throws(() => merge(map(declarations(live)), map(group(action('fire', bind('js6_button1'))))), /does not identify/);
   assert.throws(() => merge(map(declarations(live)), map(declarations(saved) + declarations(saved))), /slot declarations/);
   assert.throws(() => merge(map('<ActionProfiles/><ActionProfiles/>'), preset), /Multiple control profiles/);
-  assert.throws(() => merge(map(declarations(live)), map(group(action('fire', '<addbind input="js1_button2"/>')))),
+  assert.throws(() => merge(map(declarations(live)), map(group(action('fire', '<unknown input="js1_button2"/>')))),
     /Unsupported joystick binding/);
   const shared = '<modifiers><mod input="js1_button5"/></modifiers>';
   assert.throws(() => merge(map(shared + group(action('brake', bind('js4_z', ' modifier="js1_button5"')))), preset),
