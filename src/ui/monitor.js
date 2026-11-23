@@ -70,9 +70,9 @@ function dialSummary(samples) {
   if (!completed.length) return '';
   if (completed.length < 4) return completed.length + ' of 4 positions tested.';
   const distinct = new Set(completed).size;
-  if (distinct === 4) return 'B1 reports four distinct button numbers. Each position can have its own game binding.';
-  if (distinct === 1) return 'B1 reports button ' + completed[0] + ' in every position. Its current controller mapping shares one input.';
-  return 'B1 reports ' + distinct + ' distinct button numbers. Positions with the same number share one input.';
+  if (distinct === 4) return 'Your button reports a different number in every position. You can bind each number separately in Star Citizen.';
+  if (distinct === 1) return 'Your button reports button ' + completed[0] + ' in every position. It keeps the same game binding across all four.';
+  return 'Your button reports ' + distinct + ' distinct numbers. Positions with the same number share one input.';
 }
 
 function makeDialCheck(page) {
@@ -80,7 +80,7 @@ function makeDialCheck(page) {
   panel.append(element('summary', '', 'Test the SEM mode dial'));
   const body = element('div', 'monitor-dial-body');
   body.append(element('p', 'monitor-dial-instructions',
-    'Choose the stick the SEM is connected to. Turn the dial to the selected position, then arm capture and tap B1 once.'));
+    'Choose the stick the SEM is connected to. For each position, turn the dial first, then arm capture and tap the same SEM button each time (for example, B3).'));
   const selector = element('select', 'monitor-host-select');
   const hostLabel = element('label', 'monitor-host-label', 'SEM host');
   hostLabel.append(selector);
@@ -113,7 +113,7 @@ function makeDialCheck(page) {
     arm.disabled = !devices.some((device) => device.id === selector.value && device.readable);
     arm.textContent = armed ? 'Cancel capture' : 'Arm position ' + (selected + 1);
     reset.disabled = !armed && samples.every((value) => value == null);
-    result.textContent = armed ? (pressed == null ? 'Tap and release B1 now.' : 'Release B1 to record button ' + pressed + '.')
+    result.textContent = armed ? (pressed == null ? 'Tap and release your test button.' : 'Release it to record button ' + pressed + '.')
       : dialSummary(samples);
   }
   function disarm() { armed = false; pressed = null; }

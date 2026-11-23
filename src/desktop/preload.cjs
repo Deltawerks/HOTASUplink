@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('viewer', {
   applyNextLaunch: (request) => ipcRenderer.invoke('viewer:apply-next-launch', request),
   restorePreviousBindings: (request) => ipcRenderer.invoke('viewer:restore-previous-bindings', request),
   chooseInstall: () => ipcRenderer.invoke('viewer:choose-install'),
+  checkUpdate: () => ipcRenderer.invoke('viewer:check-update'),
+  downloadUpdate: () => ipcRenderer.invoke('viewer:download-update'),
+  restartForUpdate: () => ipcRenderer.invoke('viewer:restart-for-update'),
   onInput: (listener) => {
     const handle = (_event, value) => listener(value);
     ipcRenderer.on('viewer:input', handle);

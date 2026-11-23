@@ -8,7 +8,7 @@ const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
 const directionSymbols = { up: '↑', right: '→', down: '↓', left: '←', press: '●', 'second-press': 'Press 2',
   'up-right': '↗', 'down-right': '↘', 'down-left': '↙', 'up-left': '↖', horizontal: '↔', vertical: '↕' };
 const pairedDirections = ['up', 'down', 'left', 'right', 'up-left', 'up-right',
-  'down-left', 'down-right', 'horizontal', 'vertical', 'press', 'second-press'];
+  'down-left', 'down-right', 'horizontal', 'vertical', 'press', 'second-press', '1', '2', '3', '4'];
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -72,6 +72,9 @@ export function createCompactLabels(host, edit, devices) {
     dismiss.onclick = () => close(true);
     const names = node('div', '');
     names.append(unit, title);
+    if (item.device === 'sem' && item.group === 'mode') {
+      names.append(node('small', 'rig-compact-unit', 'Bind an action to each dial position here. To change what B3 sends by position, configure B3 in VKBDevCfg.'));
+    }
     heading.append(names, dismiss);
     const body = node('div', 'rig-compact-entries');
     for (const entry of item.groupEntries) {
@@ -186,7 +189,7 @@ export function createCompactLabels(host, edit, devices) {
           const line = node(row.summary ? 'button' : 'span', row.summary ? 'rig-compact-direction rig-hat-slot' : 'rig-compact-direction');
           const stagedPress = twoPresses && (direction === 'press' || direction === 'second-press');
           const glyph = node('b', stagedPress ? 'rig-press-stage' : '',
-            stagedPress && direction === 'press' ? 'Press 1' : directionSymbols[direction]);
+            stagedPress && direction === 'press' ? 'Press 1' : directionSymbols[direction] || direction);
           glyph.setAttribute('aria-hidden', 'true');
           line.append(glyph, node('span', '', name));
           if (count > 1) line.append(node('small', 'rig-compact-count', '+' + (count - 1)));

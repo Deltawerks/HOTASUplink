@@ -49,7 +49,9 @@ function makeSem() {
     ['up', 'press', 'down'].forEach((direction, i) => inputs.push(make(46 + index * 3 + i, name.toLowerCase(), name + ' rocker · ' + direction, { direction })));
   }
   inputs.push(make(52, 'start', 'START · red button'));
-  for (let mode = 1; mode <= 4; mode++) inputs.push(make(52 + mode, 'mode', 'Mode dial · ' + mode));
+  for (let mode = 1; mode <= 4; mode++) {
+    inputs.push(make(52 + mode, 'mode', 'Mode dial · ' + mode, { position: mode, discoverable: true }));
+  }
   inputs.push(
     make(57, 'c1', 'C1 · front button'),
     make(58, 'flaps', 'Flaps · down'),

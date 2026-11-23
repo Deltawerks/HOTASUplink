@@ -125,6 +125,8 @@ async function populate(destination, publicBuild) {
   await run(compiler.file, compiler.args, { windowsHide: true });
   await run(compiler.file, ['/nologo', '/optimize+', '/target:exe',
     '/out:' + path.join(content, 'src/game/GameStatus.exe'), path.join(root, 'src/game/GameStatus.cs')], { windowsHide: true });
+  await run(compiler.file, ['/nologo', '/optimize+', '/target:exe', '/reference:System.IO.Compression.dll',
+    '/out:' + path.join(content, 'src/desktop/update-store-extract.exe'), path.join(root, 'src/desktop/update-store-extract.cs')], { windowsHide: true });
   await fs.writeFile(path.join(destination, launcher),
     '@echo off\r\nstart "" "%~dp0' + exeName + '" --compatibility-mode\r\n');
   // Exercise the shipped runtime and its module graph without opening the UI or controllers.
@@ -133,6 +135,7 @@ async function populate(destination, publicBuild) {
     "import 'three/addons/loaders/GLTFLoader.js';",
     "import './src/rig/profiles.mjs';",
     "import './src/game/profile.cjs';",
+    "import './src/desktop/auto-update.cjs';",
     "console.log(JSON.stringify([process.versions.electron, process.arch]));",
   ].join('\n');
   const { stdout } = await run(executable, ['--input-type=module', '--eval', check], {
@@ -200,7 +203,8 @@ async function zipBuild(stage, folder, publicBuild) {
   const unexpected = entries.find(entry => /(?:\.test\.[cm]?js|\.(?:xml|log|p4k|jpe?g|heic|dng))$/i.test(entry) ||
     /\/(?:ref|models|[^/]*-backups)\//i.test(entry) || (/\.glb$/i.test(entry) && !models.includes(entry)));
   if (unexpected) throw new Error('Unexpected file in portable archive: ' + unexpected);
-  const required = [folder + '/' + exeName, folder + '/' + launcher, folder + '/LICENSE', folder + '/LICENSE-Electron.txt'];
+  const required = [folder + '/' + exeName, folder + '/' + launcher, folder + '/LICENSE', folder + '/LICENSE-Electron.txt',
+    folder + '/resources/app/src/desktop/update-store-extract.exe'];
   if (publicBuild) required.push(...models);
   for (const rel of required) {
     if (!entries.includes(rel)) throw new Error('Missing file in portable archive: ' + rel);

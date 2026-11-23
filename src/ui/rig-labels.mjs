@@ -113,7 +113,7 @@ function describe(control, count, context, selected, editedIds, compact = false)
     ...(compact ? { compactName: compactAction(rows[0]) || suggestion || (control.device === 'pedals' ? control.label : ''),
       calloutNote: suggestion ? 'Suggested' : !rows.length && control.device === 'pedals' ? (control.needsCapture ? 'Identify axis' : 'Unassigned') : '',
       controlLabel: control.label,
-      direction: control.direction || (control.group === 'pov' && povAxes[control.key]) || '' } : {}),
+      direction: control.position ? String(control.position) : control.direction || (control.group === 'pov' && povAxes[control.key]) || '' } : {}),
     text: names.join('\n') || (suggestion ? 'This starter suggests ' + suggestion + '. Identify this footplate in Settings → Toe brake axes to include the binding when you save.' :
       control.needsCapture ? 'Input number unverified' : 'Unassigned'),
     active: control.id === selected, edited: Boolean(editedIds?.has(control.id)) };
@@ -159,16 +159,16 @@ export function rigLabels(sheet, focus, selected, { reference = false, context =
     const edited = controls.find(control => editedIds?.has(control.id));
     const representative = chosen || edited || firstAssigned(controls, context) || controls[0];
     const firstLabel = controls[0].label;
-    const hat = compact && device !== 'sem' && (stickHats.has(group) || controls.some(control => control.hat));
-    const title = group === 'pov' ? 'A1 POV / ministick' : hat || controls.length > 1 ? firstLabel.split(' · ')[0] : firstLabel;
+    const expandable = compact && ((device !== 'sem' && stickHats.has(group)) || controls.some(control => control.hat || control.position));
+    const title = group === 'pov' ? 'A1 POV / ministick' : expandable || controls.length > 1 ? firstLabel.split(' · ')[0] : firstLabel;
     const groupEntries = controls.map(control => describe(control, controls.length, context, selected, editedIds, compact));
     const item = groupEntries.find(entry => entry.key === representative.key);
     // A1's digital POV and analogue ministick share one physical cap. Show all
     // its directions and any bound axes; the detailed popup lists both modes.
-    const hatSlots = hat && groupEntries.filter(entry => entry.direction && (group !== 'pov' || !povAxes[entry.key] || entry.actions.length));
+    const hatSlots = expandable && groupEntries.filter(entry => entry.direction && (group !== 'pov' || !povAxes[entry.key] || entry.actions.length));
     return { ...item, device, group, groupTitle: title, groupEntries,
-      ...(compact ? { compact: true, compactName: hat ? title : item.compactName || 'Unassigned' } : {}),
-      ...(hat ? { hatSlots, editSlots: editing } : {}),
+      ...(compact ? { compact: true, compactName: expandable ? title : item.compactName || 'Unassigned' } : {}),
+      ...(expandable ? { hatSlots, editSlots: editing } : {}),
       deviceTitle: focus === 'all' ? unitNames[device] : '', reference,
       referenceSide: reference && focus === 'all' ? referenceRail(device, group, placement) : undefined,
       dimmed: Boolean(editing && !reference && !compact && current && current.device === focus && !chosen) };

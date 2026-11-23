@@ -2,7 +2,7 @@
 
 Configure your flight controls in 3D and apply your bindings to Star Citizen. HOTAS Uplink reads your active game profile, shows each assignment on the physical control, and lets you save, apply and restore layouts.
 
-**[Download the Windows app (.zip) · v0.5.2](https://github.com/Deltawerks/HOTASUplink/releases/download/v0.5.2/HOTAS-Uplink-0.5.2-win32-x64.zip)**
+**[Download the Windows app (.zip) · v0.5.4](https://github.com/Deltawerks/HOTASUplink/releases/download/v0.5.4/HOTAS-Uplink-0.5.4-win32-x64.zip)**
 
 Extract the ZIP and open **HOTAS Uplink.exe**. GitHub’s green **Code → Download ZIP** gives you the source code if you want to inspect or build it yourself.
 
@@ -13,6 +13,8 @@ This guide covers the **VKB Gladiator EVO right stick and left Omni-Throttle** w
 ## Open the viewer
 
 Extract the Windows ZIP and open **HOTAS Uplink.exe** inside the extracted folder. Keep the executable with its neighboring files. You can browse saved bindings with the controllers unplugged.
+
+Starting with **0.5.4**, open **Settings → App updates → Check for updates** for future releases. Choose **Download update**, then restart when you’re ready. Uplink checks the Windows ZIP against GitHub’s SHA-256 digest. Your usual shortcut opens the updated app with your existing settings and layouts. Players on an earlier version need to download and extract the Windows ZIP once to get this feature.
 
 For mouse-only editing with software graphics, open **HOTAS Uplink - Compatibility.cmd** in the same folder. This mode skips the Windows joystick reader. You can select controls, search actions and save layouts. Close the app before switching launch modes. From source, use `npm start -- --compatibility-mode`.
 
@@ -38,7 +40,8 @@ Click the layout name in the top bar to choose **Active game profile**, **New bl
 - Open **Settings** at the bottom right and drag **Text size** to resize the interface and Quick view labels. The camera holds its position. The app remembers one percentage across displays.
 - **SEM module** starts **Off**. Choose **Outside left** or **Outside right** to add the GNX-SEM beside a stick. The app remembers that placement. Choose each lever's detents in **Settings → SEM lever positions**.
 - Turning a center base wheel selects its throttle control. If your stick reports that wheel on a different axis, open **Settings**, choose **Identify wheel** for that stick, and roll it. The app remembers the reported axis for that side.
-- Open **Input monitor** to compare the devices Star Citizen saved with the devices Windows sees. Its four-position dial check records the logical button reported when you press B1 in each position.
+- In **Quick view**, zoom in on the SEM mode dial to see positions **1–4** and assign an action to any position. To make B3 or another button send different inputs as you turn the dial, configure the dial as a **Modal Switch** and the button as **ButtonM** in VKBDevCfg.
+- Open **Input monitor** to compare the devices Star Citizen saved with the devices Windows sees. Under **Test the SEM mode dial**, press the same button at each position to see the button numbers your controller sends.
 
 ## Edit and save a layout
 

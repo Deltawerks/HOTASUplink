@@ -6,6 +6,8 @@ const { loadProfile, listSources, listActions, namedLayoutRevision, saveLayout, 
 const { falconStarterId } = require('../rig/falcon-starter.mjs');
 const { getActiveFileState, restoreActiveFile } = require('../game/active-files.cjs');
 const { startInput } = require('../input');
+const { createUpdater } = require('./auto-update.cjs');
+const { pruneInstalled } = require('./update-store.cjs');
 
 const root = path.resolve(__dirname, '../..');
 const defaultLive = path.join(
@@ -50,6 +52,21 @@ function chooseAssetScheme() {
 }
 const assetScheme = chooseAssetScheme();
 const viewerUrl = assetScheme + '://app/src/ui/index.html';
+const version = require('../../package.json').version;
+// A custom profile (including test launches) gets its own update store.
+const isolatedProfile = app.commandLine.hasSwitch('user-data-dir');
+const updateHome = isolatedProfile || !process.env.LOCALAPPDATA ? app.getPath('userData')
+  : path.join(process.env.LOCALAPPDATA, appName);
+const storeDir = path.join(updateHome, 'updates');
+const updateSupported = Boolean(app.isPackaged && process.platform === 'win32');
+const updater = createUpdater({ version, storeDir, supported: updateSupported });
+let restartExecutable = null;
+
+function quitForUpdate(executable) {
+  if (saving) throw new Error('Wait for the layout change to finish before restarting.');
+  restartExecutable = executable;
+  app.quit();
+}
 if (compatibilityMode) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('use-gl', 'angle');
@@ -117,6 +134,20 @@ ipcMain.handle('viewer:state', () => ({
   livePath, devices, status, compatibilityMode, scanDevicesByRig, startEditing: process.argv.includes('--edit-layout'),
 }));
 ipcMain.handle('viewer:sources', listLayouts);
+function updateHandler(channel, operation) {
+  ipcMain.handle(channel, event => {
+    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame ||
+        event.senderFrame.url !== viewerUrl) throw new Error('Open Settings to update HOTAS Uplink.');
+    return operation();
+  });
+}
+updateHandler('viewer:check-update', updater.checkUpdate);
+updateHandler('viewer:download-update', updater.downloadUpdate);
+updateHandler('viewer:restart-for-update', async () => {
+  const executable = await updater.cached();
+  if (!executable) throw new Error('Download an update before restarting.');
+  quitForUpdate(executable);
+});
 function sourceOptions(id) {
   if (typeof id !== 'string') throw new Error('Invalid layout source.');
   if (id === 'active') return { livePath };
@@ -145,6 +176,7 @@ ipcMain.handle('viewer:verify-layout', (_event, id, expectedRevision, scope) => 
   return verifyLayout({ ...sourceOptions(id), expectedRevision, scope });
 });
 async function writeProfile(operation) {
+  if (restartExecutable) throw new Error('HOTAS Uplink is restarting for an update.');
   if (saving) throw new Error('A layout change is already in progress. Wait for it to finish.');
   saving = true;
   try {
@@ -248,6 +280,7 @@ async function openWindow() {
       message: 'Discard the unsaved layout changes?',
     });
     if (choice === 1) event.preventDefault();
+    else restartExecutable = null;
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, url) => {
@@ -278,7 +311,13 @@ if (app.requestSingleInstanceLock({ compatibilityMode })) {
       });
     }
   });
-  app.whenReady().then(openWindow);
+  app.whenReady().then(async () => {
+    // The originally extracted EXE stays a working entry point after updates.
+    const newer = await updater.cached().catch(() => null);
+    if (newer) return quitForUpdate(newer);
+    await openWindow();
+    if (updateSupported) pruneInstalled(storeDir, version).catch(() => {});
+  });
 } else {
   app.quit();
 }
@@ -286,4 +325,10 @@ app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => { if (saving) event.preventDefault(); });
 app.on('will-quit', () => {
   if (stopInput) stopInput();
+  // Schedule only after Electron has honored any unsaved-changes veto.
+  if (restartExecutable) {
+    const args = process.argv.slice(1).filter(arg => ['--compatibility-mode', '--edit-layout'].includes(arg));
+    if (isolatedProfile) args.push('--user-data-dir=' + app.getPath('userData'));
+    app.relaunch({ execPath: restartExecutable, args });
+  }
 });

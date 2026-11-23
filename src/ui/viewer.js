@@ -8,6 +8,7 @@ import { addIcons } from './icons.js';
 import { createEditSession } from './edit-session.mjs';
 import { createGameHandoff } from './game-handoff.mjs';
 import { createNextLaunch } from './next-launch.mjs';
+import { createUpdateControls } from './app-updates.mjs';
 
 const $ = (id) => document.getElementById(id);
 const pages = { rig: 'Controls', sheet: 'Binding sheet', monitor: 'Input monitor' };
@@ -763,6 +764,12 @@ async function chooseInstallation() {
     setNotice();
   }
 }
+const addUpdateControls = createUpdateControls(window.viewer, () => {
+  if (editSession.saving || nextLaunch.writing) return 'Wait for the binding file to finish saving before restarting.';
+  if (editSession.dirty) return 'Save or discard your staged layout changes before restarting.';
+  return '';
+}, () => $('picker').close());
+
 function openSettings() {
   const root = openDialog('Settings', 'settings-dialog');
   const appearance = section(root, 'Appearance');
@@ -804,6 +811,7 @@ function openSettings() {
   appearance.append(heading, slider, notes);
   if (controllerSetup.devices.sem) addVkbSettings(root);
   if (pedalsEnabled()) addAxisSettings(root, 'pedals');
+  addUpdateControls(section(root, 'App updates'));
   const about = section(root, 'About HOTAS Uplink');
   about.append(
     el('p', '', 'DeltaWerks made HOTAS Uplink to help Star Citizen players see and edit their joystick bindings. The 3D models are visual references for the controls on your desk.'),

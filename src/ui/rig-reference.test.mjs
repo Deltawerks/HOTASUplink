@@ -76,6 +76,26 @@ test('unassigned VIRPIL flyouts preserve every editable slot and the separate pr
   }
 });
 
+test('the SEM dial exposes its four positions before selection and keeps assignments on the correct tile', () => {
+  const bindings = [{ physicalDevice: 'sem', slot: 1, input: 'button55', label: 'Request Landing' }];
+  for (const placement of ['left', 'right']) {
+    const options = { compact: true, editing: true, placement };
+    const blank = buildSheet(null, factoryControls, { placement });
+    const dial = rigLabels(blank, 'all', null, options).find(item => item.group === 'mode');
+    assert.equal(dial.compactName, 'Mode dial');
+    assert.equal(dial.editSlots, true);
+    assert.deepEqual(dial.hatSlots.map(slot => [slot.direction, slot.key, slot.text]), [
+      ['1', 'button53', 'Unassigned'], ['2', 'button54', 'Unassigned'],
+      ['3', 'button55', 'Unassigned'], ['4', 'button56', 'Unassigned'],
+    ]);
+    const sheet = buildSheet({ bindings }, factoryControls, { placement });
+    const focused = rigLabels(sheet, 'sem', 'sem:button56', options).find(item => item.group === 'mode');
+    assert.deepEqual(focused.hatSlots.map(slot => slot.text), ['Unassigned', 'Unassigned', 'Request Landing', 'Unassigned']);
+    assert.ok(focused.hatSlots[3].active);
+    assert.ok(rigLabels(sheet, 'all', null, { ...options, placement: 'off' }).every(item => item.device !== 'sem'));
+  }
+});
+
 test('R1-FALCON fits in front of both sticks and has separate reference markers for each axis', () => {
   const profile = rigForId(virpilAlphaId);
   assert.equal(profile.deskPositions('off', false).pedals, undefined);

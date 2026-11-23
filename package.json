@@ -1,7 +1,7 @@
 {
   "name": "deltawerks-hotas-uplink",
   "productName": "HOTAS Uplink",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "license": "SEE LICENSE IN LICENSE",
   "description": "3D flight control configuration and Star Citizen bindings for Windows",
   "repository": {
@@ -12,7 +12,7 @@
   "main": "src/desktop/main.cjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test src/game/*.test.cjs src/ui/*.test.mjs test/input/reader.test.cjs",
+    "test": "node --test src/desktop/*.test.cjs src/game/*.test.cjs src/ui/*.test.mjs test/input/reader.test.cjs",
     "build": "node scripts/package.cjs"
   },
   "dependencies": {
